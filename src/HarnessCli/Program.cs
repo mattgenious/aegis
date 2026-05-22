@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using HarnessCli.Backends;
 using HarnessCli.Core;
 
 namespace OpencodeHarnessCli;
@@ -1781,46 +1782,6 @@ Examples:
         Summary? FreshSummary);
 
     private sealed record MessageLine(string Id, string Text);
-
-    private sealed class OpenCodeClient(HttpClient http)
-    {
-        public async Task<JsonNode?> GetJson(string path)
-        {
-            using var response = await http.GetAsync(path);
-            await EnsureSuccess(response);
-            var text = await response.Content.ReadAsStringAsync();
-            return string.IsNullOrWhiteSpace(text) ? null : JsonNode.Parse(text);
-        }
-
-        public async Task<JsonNode?> PostJson(string path, JsonObject? body)
-        {
-            using var content = new StringContent(body?.ToJsonString(JsonOptions) ?? string.Empty, Encoding.UTF8, "application/json");
-            using var response = await http.PostAsync(path, content);
-            await EnsureSuccess(response);
-            var text = await response.Content.ReadAsStringAsync();
-            if (string.IsNullOrWhiteSpace(text)) return null;
-            return JsonNode.Parse(text);
-        }
-
-        public async Task<JsonNode?> PostEmpty(string path)
-        {
-            using var response = await http.PostAsync(path, content: null);
-            await EnsureSuccess(response);
-            var text = await response.Content.ReadAsStringAsync();
-            return string.IsNullOrWhiteSpace(text) ? null : JsonNode.Parse(text);
-        }
-
-        public async Task PostNoContent(string path, JsonObject body)
-        {
-            using var content = new StringContent(body.ToJsonString(JsonOptions), Encoding.UTF8, "application/json");
-            using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = content };
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-            if (response.StatusCode != HttpStatusCode.NoContent && !response.IsSuccessStatusCode)
-            {
-                await EnsureSuccess(response);
-            }
-        }
-    }
 
     private sealed class Options
     {
