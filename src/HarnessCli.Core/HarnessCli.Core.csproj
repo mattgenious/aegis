@@ -5,10 +5,18 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>HarnessCli</RootNamespace>
+    <PackageId>HarnessCli.Core</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>mattgenious</Authors>
+    <Description>Reusable contracts, session registry infrastructure, state normalization, and prompt rendering for harness-cli agent backends.</Description>
+    <RepositoryUrl>https://github.com/mattgenious/harness-cli</RepositoryUrl>
+    <PackageTags>agents;cli;harness;automation</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="..\..\prompts\**\*.md" Link="prompts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\prompts\**\*.md" Link="prompts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Pack="true" PackagePath="contentFiles\any\any\prompts\%(RecursiveDir)%(Filename)%(Extension)" PackageCopyToOutput="true" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
