@@ -253,6 +253,86 @@ public class DomainContractsTests
         }
     }
 
+    [Fact]
+    public async Task PiBackendCanCreateSessionAndParseSummaryFromPersistedHistory()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var backend = new PiBackend();
+            var request = new CreateSessionRequest(
+                Title: "pi-backend-session",
+                ParentSessionId: null,
+                Directory: tempDir);
+            var session = await backend.CreateSessionAsync(request);
+
+            var statusFile = session.BackendMetadataPath + ".status.json";
+            var messagesFile = session.BackendMetadataPath + ".messages.jsonl";
+
+            Assert.True(File.Exists(statusFile));
+            Assert.Equal(BackendKind.Pi, session.Backend);
+
+            var rawMessages = new[]
+            {
+                new
+                {
+                    Id = "pi_msg_1",
+                    Role = "assistant",
+                    Text = "Task started\nFINAL HANDOFF\nImplemented requested logic.",
+                    PartId = "part_pi_1",
+                    Timestamp = "2026-01-01T12:00:00+00:00"
+                }
+            };
+            await File.WriteAllTextAsync(messagesFile, JsonSerializer.Serialize(rawMessages));
+
+            var state = await backend.GetSessionStateAsync(session);
+            Assert.Equal("idle", state.EffectiveStatus);
+            Assert.True(state.HasFreshSummary);
+
+            var summary = await backend.ExtractSummaryAsync(session, "FINAL HANDOFF");
+            Assert.NotNull(summary);
+            Assert.Equal("pi_msg_1", summary!.MessageId);
+            Assert.Equal("part_pi_1", summary.PartId);
+            Assert.Equal("Implemented requested logic.", summary.Text);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PiBackendPostPromptWithMissingBinaryReturnsGuidance()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var backend = new PiBackend("/no/such/pi-binary");
+            var session = await backend.CreateSessionAsync(new CreateSessionRequest("pi-session", null, tempDir));
+            var request = new PromptRequest(
+                Text: "Run a quick check",
+                SourceKind: PromptSourceKind.Inline,
+                SourceLocation: null);
+
+            var result = await backend.PostPromptAsync(session, request);
+            Assert.False(result.IsSuccess);
+            Assert.Contains("executable", result.Message);
+            Assert.Equal(127, result.ExitCode);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
     private sealed class TempRegistryPathProvider(string directoryPath) : ISessionRegistryPathProvider
     {
         public string DirectoryPath { get; } = directoryPath;
