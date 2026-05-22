@@ -30,6 +30,8 @@ The CLI targets .NET 10 to match the repo test projects and current agent workst
 
 Live backend verification is documented in [docs/live-backend-smoke.md](./docs/live-backend-smoke.md). Backend support is considered verified only after a real `ask` reaches the backend and extracts a fresh `FINAL HANDOFF`.
 
+Library/package consumption notes for Baton and other callers are in [docs/package-consumption.md](./docs/package-consumption.md).
+
 > Legacy `scripts/opencode-harness-cli` path references in old docs are preserved for historical context only.
 
 The OpenCode installer publishes versioned `opencode-harness-cli.exe` builds under `$HOME\.local\opencode-harness-cli\versions` and installs a PATH shim at `$HOME\.local\opencode-harness-cli\bin\opencode-harness-cli.cmd`. Open a new terminal after install so the higher-priority shim is used instead of any older locked executable.
