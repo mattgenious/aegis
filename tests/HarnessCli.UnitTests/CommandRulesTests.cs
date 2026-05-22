@@ -25,7 +25,9 @@ public class CommandRulesTests
         Assert.True(File.Exists(coreProject), "HarnessCli.Core must exist as a reusable library project.");
         Assert.Contains("HarnessCli.Core.csproj", cliProjectText);
         Assert.True(File.Exists(Path.Combine(directory, "src", "HarnessCli.Core", "Core", "BackendContracts.cs")));
+        Assert.True(File.Exists(Path.Combine(directory, "src", "HarnessCli.Core", "Infrastructure", "SessionRegistryService.cs")));
         Assert.False(Directory.Exists(Path.Combine(directory, "src", "HarnessCli", "Core")));
+        Assert.False(Directory.Exists(Path.Combine(directory, "src", "HarnessCli", "Infrastructure")));
     }
 
     [Fact]
