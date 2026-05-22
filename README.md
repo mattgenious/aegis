@@ -5,6 +5,7 @@
 ## Layout
 
 - `src/HarnessCli.Core/` – reusable contracts, state normalization, and prompt rendering
+- `src/HarnessCli.Backends/` – reusable OpenCode, Codex, and Pi backend adapters
 - `src/HarnessCli/` – CLI application source
 - `tests/HarnessCli.UnitTests/` – unit tests
 - `tests/HarnessCli.IntegrationTests/` – integration tests
