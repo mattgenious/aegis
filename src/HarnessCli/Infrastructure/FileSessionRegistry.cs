@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Linq;
 using HarnessCli.Core;
 
 namespace HarnessCli.Infrastructure;
@@ -43,6 +44,9 @@ public sealed class FileSessionRegistry : ISessionRegistry
         await JsonSerializer.SerializeAsync(stream, session, _options, cancellationToken).ConfigureAwait(false);
     }
 
+    public Task<bool> ExistsAsync(string sessionId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(File.Exists(SessionFilePath(sessionId)));
+
     public async Task<bool> DeleteAsync(string sessionId, CancellationToken cancellationToken = default)
     {
         var path = SessionFilePath(sessionId);
@@ -63,6 +67,14 @@ public sealed class FileSessionRegistry : ISessionRegistry
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         var session = await JsonSerializer.DeserializeAsync<SessionRecord>(stream, _options, cancellationToken);
         return session;
+    }
+
+    public async Task<IReadOnlyList<SessionRecord>> GetByBackendAsync(
+        BackendKind backend,
+        CancellationToken cancellationToken = default)
+    {
+        var all = await GetAllAsync(cancellationToken);
+        return all.Where(session => session.Backend == backend).ToArray();
     }
 
     public async Task<IReadOnlyList<SessionRecord>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -88,6 +100,22 @@ public sealed class FileSessionRegistry : ISessionRegistry
         return sessions;
     }
 
+    public async Task<int> RemoveExpiredAsync(TimeSpan maxAge, CancellationToken cancellationToken = default)
+    {
+        var cutoff = DateTimeOffset.UtcNow - maxAge;
+        var sessions = await GetAllAsync(cancellationToken);
+        var removed = 0;
+
+        foreach (var session in sessions)
+        {
+            if (session.LastUpdatedUtc >= cutoff) continue;
+            var removedThis = await DeleteAsync(session.SessionId, cancellationToken);
+            if (removedThis) removed++;
+        }
+
+        return removed;
+    }
+
     private string SessionFilePath(string sessionId)
     {
         var safeFileName = string.Concat(sessionId.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
@@ -95,4 +123,3 @@ public sealed class FileSessionRegistry : ISessionRegistry
         return Path.Combine(_pathProvider.DirectoryPath, fileName);
     }
 }
-
