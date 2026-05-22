@@ -355,23 +355,35 @@ internal static class Program
             return null;
         }
 
+        var unixCommand =
+            "cd " + PosixShellQuote(workingDirectory) +
+            " && (tail -f /dev/null | env -u OPENCODE_SERVER_PASSWORD -u OPENCODE_SERVER_USERNAME opencode " +
+            string.Join(' ', arguments.Select(PosixShellQuote)) +
+            " >>" + PosixShellQuote(stdout) +
+            " 2>>" + PosixShellQuote(stderr) +
+            ") & echo $!";
+
         var unixStartInfo = new ProcessStartInfo
         {
-            FileName = "opencode",
+            FileName = "sh",
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = workingDirectory
+            RedirectStandardError = true
         };
-        foreach (var argument in arguments) unixStartInfo.ArgumentList.Add(argument);
-        unixStartInfo.Environment.Remove("OPENCODE_SERVER_PASSWORD");
-        unixStartInfo.Environment.Remove("OPENCODE_SERVER_USERNAME");
+        unixStartInfo.ArgumentList.Add("-c");
+        unixStartInfo.ArgumentList.Add(unixCommand);
 
-        var process = Process.Start(unixStartInfo) ?? throw new InvalidOperationException("Failed to start opencode.");
-        _ = PumpToFile(process.StandardOutput, stdout);
-        _ = PumpToFile(process.StandardError, stderr);
-        return process.Id;
+        using var unixLauncher = Process.Start(unixStartInfo) ?? throw new InvalidOperationException("Failed to start opencode.");
+        var pidText = (unixLauncher.StandardOutput.ReadLine() ?? string.Empty).Trim();
+        var errorText = unixLauncher.StandardError.ReadToEnd().Trim();
+        unixLauncher.WaitForExit(5000);
+        if (unixLauncher.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Failed to launch opencode: {errorText}");
+        }
+
+        return int.TryParse(pidText, out var pid) ? pid : null;
     }
 
     private static string WindowsCmdQuote(string value)
@@ -379,14 +391,18 @@ internal static class Program
         return "\"" + value.Replace("\"", "\"\"") + "\"";
     }
 
+    private static string PosixShellQuote(string value)
+    {
+        return "'" + value.Replace("'", "'\"'\"'") + "'";
+    }
+
     private static async Task PumpToFile(StreamReader reader, string path)
     {
         await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
         await using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
-        while (!reader.EndOfStream)
+        while (await reader.ReadLineAsync() is { } line)
         {
-            var line = await reader.ReadLineAsync();
-            if (line is not null) await writer.WriteLineAsync(line);
+            await writer.WriteLineAsync(line);
         }
     }
 
@@ -1144,10 +1160,11 @@ Operating contract:
         var count = 0;
         try
         {
-            while (!reader.EndOfStream && !cts.IsCancellationRequested)
+            while (!cts.IsCancellationRequested)
             {
                 var line = await reader.ReadLineAsync(cts.Token);
-                if (line is null || !line.StartsWith("data: ", StringComparison.Ordinal)) continue;
+                if (line is null) break;
+                if (!line.StartsWith("data: ", StringComparison.Ordinal)) continue;
                 Console.WriteLine(line[6..]);
                 count++;
                 if (count >= limit) break;

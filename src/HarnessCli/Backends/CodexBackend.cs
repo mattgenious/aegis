@@ -51,9 +51,8 @@ public sealed class CodexBackend : ISessionBackend
         {
             "exec",
             "--json",
-            "--full-auto",
-            "--progress-cursor",
-            "false",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
             prompt
         };
 
@@ -65,7 +64,7 @@ public sealed class CodexBackend : ISessionBackend
 
         if (!string.IsNullOrWhiteSpace(session.Directory))
         {
-            args.Add("--cwd");
+            args.Add("--cd");
             args.Add(session.Directory);
         }
 
@@ -73,6 +72,7 @@ public sealed class CodexBackend : ISessionBackend
         {
             FileName = CodexBinary,
             UseShellExecute = false,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true
@@ -85,6 +85,7 @@ public sealed class CodexBackend : ISessionBackend
         try
         {
             using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start codex.");
+            process.StandardInput.Close();
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
             var exitCodeTask = process.WaitForExitAsync(cancellationToken);
@@ -319,8 +320,24 @@ Operating contract:
         var index = 0;
         foreach (var line in lines)
         {
-            var node = JsonNode.Parse(line);
+            JsonNode? node;
+            try
+            {
+                node = JsonNode.Parse(line);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
             if (node is null) continue;
+
+            if (TryGetCurrentEventMessage(node, index, out var currentEventMessage))
+            {
+                messages.Add(currentEventMessage);
+                index++;
+                continue;
+            }
 
             var msg = node["msg"]?.AsObject();
             var type = msg?["type"]?.GetValue<string>();
@@ -352,6 +369,41 @@ Operating contract:
         }
 
         return messages;
+    }
+
+    private static bool TryGetCurrentEventMessage(JsonNode node, int index, out CodexStoredMessage message)
+    {
+        message = new CodexStoredMessage(string.Empty, string.Empty, string.Empty, string.Empty, null);
+        var eventType = node["type"]?.GetValue<string>();
+        if (!string.Equals(eventType, "item.completed", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var item = node["item"]?.AsObject();
+        if (item is null)
+        {
+            return false;
+        }
+
+        var itemType = item["type"]?.GetValue<string>();
+        var text = item["text"]?.GetValue<string>();
+        if (!string.Equals(itemType, "agent_message", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var timestamp = DateTimeOffset.TryParse(node["timestamp"]?.GetValue<string>(), out var parsed)
+            ? parsed
+            : DateTimeOffset.UtcNow;
+        message = new CodexStoredMessage(
+            item["id"]?.GetValue<string>() ?? $"msg_{index:D6}",
+            "assistant",
+            text.Trim(),
+            $"part_{index:D6}",
+            timestamp);
+        return true;
     }
 
     private static string? LatestMessageId(IReadOnlyList<BackendMessage> messages, string role)

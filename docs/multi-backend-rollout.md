@@ -12,7 +12,8 @@
 - [x] Add shared registry and session metadata support.
 - [x] Implement adapter abstractions for all target backends.
 - [x] Wire all CLI session-oriented commands to route through the abstraction for codex/pi.
-- [ ] Add end-to-end CLI command parity tests for backend-routing.
+- [x] Live-smoke `ask` against opencode, codex, and pi.
+- [ ] Add automated end-to-end CLI command parity tests for backend-routing where credentials/backends are available.
 - [ ] Expand README command examples with live backend examples once command routing is validated in both adapters.
 - [x] Wire ask/status/last-summary through backends for codex/pi.
 - [x] Wire new/latest/messages/wait/abort through backends for codex/pi.
