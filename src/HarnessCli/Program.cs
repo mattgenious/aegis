@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using HarnessCli.Core;
 
 namespace OpencodeHarnessCli;
 
@@ -45,28 +46,9 @@ internal static class Program
             var options = Options.Parse(args.Skip(1));
             using var http = CreateHttpClient(options.Server);
             var client = new OpenCodeClient(http);
+            var backend = options.BackendKind;
 
-            return command switch
-            {
-                "health" => await Health(client),
-                "ensure-server" => await EnsureServer(options),
-                "self-test" => SelfTest(),
-                "new" => await NewSession(client, options),
-                "latest" => await Latest(client, options),
-                "spawn" => await Spawn(client, options),
-                "ask" => await Ask(client, options),
-                "status" => await Status(client, options),
-                "messages" => await Messages(client, options),
-                "last-summary" => await LastSummary(client, options),
-                "wait" => await Wait(client, options),
-                "abort" => await Abort(client, options),
-                "events" => await Events(http, options),
-                "watch" => await Watch(client, options),
-                "watch-many" => await WatchMany(client, options),
-                "tail" => await Tail(client, options),
-                "export" => await Export(client, options),
-                _ => Fail($"Unknown command '{command}'. Run with --help for usage.")
-            };
+            return await RouteCommandToBackend(backend, command, client, http, options);
         }
         catch (ArgumentException ex)
         {
@@ -108,6 +90,47 @@ internal static class Program
         {
             return Fail($"Access denied: {ex.Message}");
         }
+    }
+
+    private static Task<int> RouteCommandToBackend(
+        BackendKind backend,
+        string command,
+        OpenCodeClient client,
+        HttpClient http,
+        Options options)
+    {
+        if (backend == BackendKind.Opencode) return RouteOpenCodeCommand(command, client, http, options);
+
+        return Task.FromResult(Fail($"Backend '{backend.ToOptionValue()}' is not supported for command '{command}' yet. Current supported backend is opencode."));
+    }
+
+    private static Task<int> RouteOpenCodeCommand(
+        string command,
+        OpenCodeClient client,
+        HttpClient http,
+        Options options)
+    {
+        return command switch
+        {
+            "health" => Health(client),
+            "ensure-server" => EnsureServer(options),
+            "self-test" => Task.FromResult(SelfTest()),
+            "new" => NewSession(client, options),
+            "latest" => Latest(client, options),
+            "spawn" => Spawn(client, options),
+            "ask" => Ask(client, options),
+            "status" => Status(client, options),
+            "messages" => Messages(client, options),
+            "last-summary" => LastSummary(client, options),
+            "wait" => Wait(client, options),
+            "abort" => Abort(client, options),
+            "events" => Events(http, options),
+            "watch" => Watch(client, options),
+            "watch-many" => WatchMany(client, options),
+            "tail" => Tail(client, options),
+            "export" => Export(client, options),
+            _ => Task.FromResult(Fail($"Unknown command '{command}'. Run with --help for usage."))
+        };
     }
 
     private static HttpClient CreateHttpClient(string server)
@@ -1357,6 +1380,8 @@ GPT-5-family variant availability seen locally:
   github-copilot/gpt-5.5:      none, low, medium, high, xhigh
 
 Common options:
+  --backend VALUE      Backend selector. One of: opencode, codex, pi. Default: opencode.
+  --engine VALUE       Alias for --backend.
   --server URL          OpenCode server URL. Default: http://127.0.0.1:4096
   --model provider/id   Model in provider/model format. Preferred: github-copilot/gpt-5.4-mini or github-copilot/gpt-5.5.
   --variant NAME        OpenCode provider-specific model variant. GPT-5 examples: none, low, medium, high, xhigh.
@@ -1822,6 +1847,8 @@ Examples:
         public List<string> Sessions { get; } = [];
         public Dictionary<string, string> ResumeSessions { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string SummaryMarker { get; private set; } = "FINAL HANDOFF";
+        public string? Backend { get; private set; }
+        public string? Engine { get; private set; }
         public bool Raw { get; private set; }
         public bool NoReply { get; private set; }
         public bool Async { get; private set; }
@@ -1838,6 +1865,20 @@ Examples:
         public int? MaxDurationMinutes { get; private set; }
         public int TimeoutSeconds { get; private set; } = 300;
         public bool TimeoutWasProvided { get; private set; }
+
+        public BackendKind BackendKind
+        {
+            get
+            {
+                var backendValue = Backend ?? Engine ?? "opencode";
+                if (!BackendKindExtensions.TryParse(backendValue, out var backendKind))
+                {
+                    throw new ArgumentException($"Unsupported backend '{backendValue}'. Use --backend opencode, codex, or pi.");
+                }
+
+                return backendKind;
+            }
+        }
 
         public void ApplyForSelfTest(IReadOnlyDictionary<string, string?> values)
         {
@@ -1877,6 +1918,8 @@ Examples:
                     case "--format": options.Format = Value(queue, arg); break;
                     case "--output": options.Output = Value(queue, arg); break;
                     case "--target": options.Targets.Add(Value(queue, arg)); break;
+                    case "--backend": options.Backend = Value(queue, arg); break;
+                    case "--engine": options.Engine = Value(queue, arg); break;
                     case "--resume-session": AddResumeSession(options.ResumeSessions, Value(queue, arg), arg); break;
                     case "--resume-session-json": AddResumeSessions(options.ResumeSessions, Value(queue, arg)); break;
                     case "--summary-marker": options.SummaryMarker = Value(queue, arg); break;
