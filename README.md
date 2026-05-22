@@ -4,7 +4,8 @@
 
 ## Layout
 
-- `src/HarnessCli/` – main CLI application source
+- `src/HarnessCli.Core/` – reusable contracts, state normalization, and prompt rendering
+- `src/HarnessCli/` – CLI application source
 - `tests/HarnessCli.UnitTests/` – unit tests
 - `tests/HarnessCli.IntegrationTests/` – integration tests
 - `prompts/` – markdown source files for built-in agent prompts
