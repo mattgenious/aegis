@@ -142,9 +142,9 @@ Current runtime support status:
 
 | Command | opencode | codex | pi |
 |---|---|---|---|
-| `ask` | ✅ | ⚙️ (adapter in place, command wiring pending) | ⚙️ (adapter in place, command wiring pending) |
-| `last-summary` | ✅ | ⚙️ (adapter in place, command wiring pending) | ⚙️ (adapter in place, command wiring pending) |
-| `status` | ✅ | ⚙️ (adapter in place, command wiring pending) | ⚙️ (adapter in place, command wiring pending) |
+| `ask` | ✅ | ✅ | ✅ |
+| `last-summary` | ✅ | ✅ | ✅ |
+| `status` | ✅ | ✅ | ✅ |
 
 Legend: ✅ command fully wired in this release, ⚙️ adapter exists and is tested but full command wiring is the next integration step.
 
