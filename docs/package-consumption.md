@@ -51,4 +51,49 @@ if (!result.IsSuccess)
 Console.WriteLine(result.Summary?.Text);
 ```
 
-Backend construction is still explicit at this stage. Backend/model profile configuration is planned in the next slice.
+Backend construction remains explicit so hosts can decide how to instantiate and lifetime-manage each backend.
+
+## Backend And Model Profiles
+
+Use `AgentProfileResolver` to keep Baton worker intent separate from backend/model transport details:
+
+```csharp
+var profiles = new AgentHarnessConfiguration
+{
+    DefaultBackend = BackendKind.Opencode,
+    Profiles = new Dictionary<string, AgentModelProfile>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["fast"] = new AgentModelProfile
+        {
+            Backend = BackendKind.Opencode,
+            ModelProvider = "github-copilot",
+            Model = "gpt-5.4-mini",
+            Variant = "low",
+            Timeout = TimeSpan.FromMinutes(5)
+        },
+        ["cheap"] = new AgentModelProfile
+        {
+            Backend = BackendKind.Opencode,
+            ModelProvider = "opencode",
+            Model = "deepseek-v4-flash-free",
+            Timeout = TimeSpan.FromMinutes(5)
+        },
+        ["deep"] = new AgentModelProfile
+        {
+            Backend = BackendKind.Opencode,
+            ModelProvider = "github-copilot",
+            Model = "gpt-5.5",
+            Variant = "high",
+            Timeout = TimeSpan.FromMinutes(20)
+        }
+    }
+};
+
+ResolvedAgentProfile resolved = new AgentProfileResolver(profiles).Resolve(new AgentProfileSelection
+{
+    Profile = "deep",
+    Variant = "xhigh"
+});
+```
+
+Resolution order is explicit override, named profile, then configuration default. The CLI exposes the same idea with `--profile fast`, `--profile cheap`, and `--profile deep`; explicit flags still override profile values.
