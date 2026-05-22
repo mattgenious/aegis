@@ -50,6 +50,26 @@ public class DomainContractsTests
     }
 
     [Fact]
+    public void SessionStateNormalizerMapsApiAndDerivedStatus()
+    {
+        var state = SessionStateNormalizer.Normalize(
+            sessionId: "ses-1",
+            backendSessionId: "backend-ses",
+            apiStatus: null,
+            messageCount: 3,
+            latestUserMessageId: "u-1",
+            latestAssistantMessageId: "a-1",
+            hasAssistantAfterAnchor: true,
+            hasFreshSummary: false);
+
+        Assert.Equal("ses-1", state.SessionId);
+        Assert.Equal("backend-ses", state.BackendSessionId);
+        Assert.Equal("idle", state.EffectiveStatus);
+        Assert.Equal("assistant-after-latest-user-without-handoff", state.DerivedStatus);
+        Assert.False(state.HasFreshSummary);
+    }
+
+    [Fact]
     public async Task FileSessionRegistryCanStoreAndReturnSessions()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -83,6 +103,92 @@ public class DomainContractsTests
             var deleted = await registry.DeleteAsync("ses-abcd");
             Assert.True(deleted);
             Assert.Null(await registry.GetAsync("ses-abcd"));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task FileSessionRegistrySupportsBackendFilteringAndCleanup()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var provider = new TempRegistryPathProvider(tempDir);
+            var registry = new FileSessionRegistry(provider);
+            var oldSession = new SessionRecord(
+                SessionId: "ses-old",
+                Backend: BackendKind.Pi,
+                BackendSessionId: "pi-old",
+                CreatedAtUtc: DateTimeOffset.UtcNow.AddHours(-10),
+                Metadata: ImmutableDictionary<string, string>.Empty) { LastUpdatedUtc = DateTimeOffset.UtcNow.AddHours(-10) };
+            var recentSession = new SessionRecord(
+                SessionId: "ses-recent",
+                Backend: BackendKind.Pi,
+                BackendSessionId: "pi-recent",
+                CreatedAtUtc: DateTimeOffset.UtcNow.AddMinutes(-10),
+                Metadata: ImmutableDictionary<string, string>.Empty) { LastUpdatedUtc = DateTimeOffset.UtcNow.AddMinutes(-10) };
+            var codexSession = new SessionRecord(
+                SessionId: "ses-codex",
+                Backend: BackendKind.Codex,
+                BackendSessionId: "c-1",
+                CreatedAtUtc: DateTimeOffset.UtcNow,
+                Metadata: ImmutableDictionary<string, string>.Empty);
+
+            await registry.AddOrUpdateAsync(oldSession);
+            await registry.AddOrUpdateAsync(recentSession);
+            await registry.AddOrUpdateAsync(codexSession);
+
+            var piSessions = await registry.GetByBackendAsync(BackendKind.Pi);
+            Assert.Equal(2, piSessions.Count);
+            var codexSessions = await registry.GetByBackendAsync(BackendKind.Codex);
+            Assert.Single(codexSessions);
+
+            var removed = await registry.RemoveExpiredAsync(TimeSpan.FromHours(1));
+            Assert.Equal(1, removed);
+            Assert.Null(await registry.GetAsync("ses-old"));
+            Assert.NotNull(await registry.GetAsync("ses-recent"));
+            Assert.Equal(2, (await registry.GetAllAsync()).Count);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SessionRegistryServiceCanResolveKnownSessionOrFailWithActionableError()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var provider = new TempRegistryPathProvider(tempDir);
+            var registry = new FileSessionRegistry(provider);
+            var service = new SessionRegistryService(registry);
+            var created = await service.CreateAndStoreAsync(
+                backend: BackendKind.Opencode,
+                backendSessionId: "op-123",
+                metadata: ImmutableDictionary.CreateRange(new[]
+                {
+                    KeyValuePair.Create("request", "seed")
+                }));
+
+            var loaded = await service.RequireAsync(created.SessionId);
+            Assert.Equal(created.SessionId, loaded.SessionId);
+
+            var ex = await Assert.ThrowsAsync<UnknownSessionException>(() => service.RequireAsync("missing-session"));
+            Assert.Equal("missing-session", ex.SessionId);
+            Assert.Contains("Use a valid session", ex.Message);
         }
         finally
         {
