@@ -54,3 +54,15 @@ The app binary remains `opencode-harness-cli` for compatibility.
 - Use `dotnet format` in CI or before major merges.
 - Prefer no custom formatting scripts beyond standard `.editorconfig` and analyzers.
 - PRs should not include refactors unrelated to the issue at hand.
+
+## Adding a backend adapter
+
+- Add the backend contract via `ISessionBackend` in `src/HarnessCli/Backends/`.
+- Keep mapping responsibilities in one place (`SessionStateNormalizer`, `SessionRegistryService`, etc.) and keep command adapters thin.
+- Persist status and message state in deterministic JSON files per session so resume/troubleshooting tools can operate independently of the transport.
+- Add adapter-level unit tests for:
+  - session creation
+  - status transitions
+  - message parsing/summarization from the target transport format
+  - explicit failure guidance when transport output is unsupported
+- Document command coverage and streaming/abort limitations in README and mark any non-wired feature flags clearly.
