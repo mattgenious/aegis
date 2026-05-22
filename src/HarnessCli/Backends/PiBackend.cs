@@ -58,18 +58,13 @@ public sealed class PiBackend : ISessionBackend
         {
             "--mode",
             "json",
-            "--prompt",
+            "--print",
             prompt
         };
 
         if (!string.IsNullOrWhiteSpace(request.Model))
         {
             args.AddRange(["--model", request.Model]);
-        }
-
-        if (!string.IsNullOrWhiteSpace(session.Directory))
-        {
-            args.AddRange(["--cwd", session.Directory]);
         }
 
         var startInfo = new ProcessStartInfo
@@ -82,6 +77,11 @@ public sealed class PiBackend : ISessionBackend
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
+
+        if (!string.IsNullOrWhiteSpace(session.Directory))
+        {
+            startInfo.WorkingDirectory = session.Directory;
+        }
 
         foreach (var arg in args)
         {
@@ -363,6 +363,13 @@ Operating contract:
 
             if (node is null) continue;
 
+            if (TryGetPiMessageEvent(node, index, out var eventMessage))
+            {
+                messages.Add(eventMessage);
+                index++;
+                continue;
+            }
+
             if (TryGetStatusFromEvent(node, out var status))
             {
                 messages.Add(new PiStoredMessage(
@@ -375,7 +382,7 @@ Operating contract:
                 continue;
             }
 
-            var role = (node["role"]?.GetValue<string>() ?? node["sender"]?.GetValue<string>() ?? "assistant").ToLowerInvariant();
+            var role = (StringValue(node["role"]) ?? StringValue(node["sender"]) ?? "assistant").ToLowerInvariant();
             var text = ExtractText(node);
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -383,10 +390,10 @@ Operating contract:
             }
 
             messages.Add(new PiStoredMessage(
-                node["id"]?.GetValue<string>() ?? node["message_id"]?.GetValue<string>() ?? $"pi_msg_{index:D6}",
+                StringValue(node["id"]) ?? StringValue(node["message_id"]) ?? $"pi_msg_{index:D6}",
                 role,
                 text,
-                node["part_id"]?.GetValue<string>() ?? node["part"]?["id"]?.GetValue<string>() ?? $"pi_part_{index:D6}",
+                StringValue(node["part_id"]) ?? StringValue(node["part"]?["id"]) ?? $"pi_part_{index:D6}",
                 ParseTimestamp(node)));
             index++;
         }
@@ -422,23 +429,67 @@ Operating contract:
         return false;
     }
 
+    private static bool TryGetPiMessageEvent(JsonNode node, int index, out PiStoredMessage message)
+    {
+        message = new PiStoredMessage(string.Empty, string.Empty, string.Empty, string.Empty, null);
+        var eventType = StringValue(node["type"]);
+        if (!string.Equals(eventType, "message_end", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(eventType, "turn_end", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var messageNode = node["message"]?.AsObject();
+        if (messageNode is null)
+        {
+            return false;
+        }
+
+        var role = StringValue(messageNode["role"]);
+        if (string.IsNullOrWhiteSpace(role))
+        {
+            return false;
+        }
+
+        var text = ExtractText(messageNode);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        message = new PiStoredMessage(
+            StringValue(messageNode["responseId"]) ?? $"pi_msg_{index:D6}",
+            role.ToLowerInvariant(),
+            text,
+            $"pi_part_{index:D6}",
+            ParseTimestamp(messageNode));
+        return true;
+    }
+
     private static string ExtractText(JsonNode node)
     {
-        var direct = node["text"]?.GetValue<string>()
-            ?? node["content"]?.GetValue<string>()
-            ?? node["message"]?.GetValue<string>()
-            ?? node["output"]?.GetValue<string>();
+        var direct = StringValue(node["text"])
+            ?? StringValue(node["content"])
+            ?? StringValue(node["message"])
+            ?? StringValue(node["output"]);
 
         if (!string.IsNullOrWhiteSpace(direct))
         {
             return direct.Trim();
         }
 
+        var contentText = ExtractContentArrayText(node["content"]);
+        if (!string.IsNullOrWhiteSpace(contentText))
+        {
+            return contentText.Trim();
+        }
+
         var nestedFromMessage = node["message"]?.AsObject();
         if (nestedFromMessage is not null)
         {
-            var nestedText = nestedFromMessage["text"]?.GetValue<string>()
-                             ?? nestedFromMessage["content"]?.GetValue<string>();
+            var nestedText = StringValue(nestedFromMessage["text"])
+                             ?? StringValue(nestedFromMessage["content"])
+                             ?? ExtractContentArrayText(nestedFromMessage["content"]);
             if (!string.IsNullOrWhiteSpace(nestedText))
             {
                 return nestedText.Trim();
@@ -448,10 +499,11 @@ Operating contract:
         var payload = node["payload"]?.AsObject();
         if (payload is not null)
         {
-            var payloadText = payload["text"]?.GetValue<string>()
-                              ?? payload["content"]?.GetValue<string>()
-                              ?? payload["output"]?.GetValue<string>()
-                              ?? payload["message"]?.GetValue<string>();
+            var payloadText = StringValue(payload["text"])
+                              ?? StringValue(payload["content"])
+                              ?? ExtractContentArrayText(payload["content"])
+                              ?? StringValue(payload["output"])
+                              ?? StringValue(payload["message"]);
             if (!string.IsNullOrWhiteSpace(payloadText))
             {
                 return payloadText.Trim();
@@ -460,7 +512,9 @@ Operating contract:
             var details = payload["message"]?.AsObject();
             if (details is not null)
             {
-                var detailsText = details["text"]?.GetValue<string>() ?? details["content"]?.GetValue<string>();
+                var detailsText = StringValue(details["text"])
+                                  ?? StringValue(details["content"])
+                                  ?? ExtractContentArrayText(details["content"]);
                 if (!string.IsNullOrWhiteSpace(detailsText))
                 {
                     return detailsText.Trim();
@@ -471,13 +525,40 @@ Operating contract:
         return string.Empty;
     }
 
+    private static string? ExtractContentArrayText(JsonNode? node)
+    {
+        if (node is not JsonArray content)
+        {
+            return null;
+        }
+
+        var parts = new List<string>();
+        foreach (var item in content)
+        {
+            var itemText = StringValue(item?["text"]);
+            if (!string.IsNullOrWhiteSpace(itemText))
+            {
+                parts.Add(itemText);
+            }
+        }
+
+        return parts.Count == 0 ? null : string.Concat(parts);
+    }
+
+    private static string? StringValue(JsonNode? node)
+    {
+        return node is JsonValue value && value.TryGetValue<string>(out var text)
+            ? text
+            : null;
+    }
+
     private static DateTimeOffset? ParseTimestamp(JsonNode node)
     {
-        var timestampText = node["timestamp"]?.GetValue<string>()
-                            ?? node["time"]?.GetValue<string>()
-                            ?? node["created_at"]?.GetValue<string>()
-                            ?? node["createdAt"]?.GetValue<string>()
-                            ?? node["ts"]?.GetValue<string>();
+        var timestampText = StringValue(node["timestamp"])
+                            ?? StringValue(node["time"])
+                            ?? StringValue(node["created_at"])
+                            ?? StringValue(node["createdAt"])
+                            ?? StringValue(node["ts"]);
 
         return DateTimeOffset.TryParse(timestampText, out var parsed) ? parsed : DateTimeOffset.UtcNow;
     }
