@@ -1,5 +1,15 @@
 # OpenCode Harness CLI
 
+> Repository now uses a `src/` + `tests/` structure before backend abstraction work.
+
+## Layout
+
+- `src/HarnessCli/` – main CLI application source
+- `tests/HarnessCli.UnitTests/` – unit tests
+- `tests/HarnessCli.IntegrationTests/` – integration tests
+
+Conventions and coding standards are documented in [CONTRIBUTING.md](./CONTRIBUTING.md).
+
 Small .NET helper for deterministic calls to the local OpenCode HTTP API.
 
 The goal is not to wrap every OpenCode endpoint. It gives agents a stable, low-friction way to launch pseudo-subagent sessions on cheaper/faster models, enforce a final handoff summary contract, and fetch that summary without loading the whole session into context.
@@ -7,9 +17,13 @@ The goal is not to wrap every OpenCode endpoint. It gives agents a stable, low-f
 ## Build
 
 ```powershell
-dotnet publish scripts/opencode-harness-cli/OpencodeHarnessCli.csproj -c Release -o "$HOME\.local\bin" --self-contained false
+dotnet build harness-cli.sln
+dotnet test harness-cli.sln
+dotnet publish src/HarnessCli/OpencodeHarnessCli.csproj -c Release -o "$HOME\.local\bin" --self-contained false
 opencode-harness-cli self-test
 ```
+
+> Legacy `scripts/opencode-harness-cli` path references in old docs are preserved for historical context only.
 
 The OpenCode installer publishes versioned `opencode-harness-cli.exe` builds under `$HOME\.local\opencode-harness-cli\versions` and installs a PATH shim at `$HOME\.local\opencode-harness-cli\bin\opencode-harness-cli.cmd`. Open a new terminal after install so the higher-priority shim is used instead of any older locked executable.
 
