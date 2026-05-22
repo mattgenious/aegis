@@ -14,6 +14,28 @@ public class CommandRulesTests
         Assert.True(File.Exists(path), "CONTRIBUTING.md must be present at the repo root.");
     }
 
+    [Fact]
+    public void BuiltInPromptsLiveAsMarkdownFiles()
+    {
+        var directory = LocateRepoRoot(Directory.GetCurrentDirectory());
+        var promptFiles = Directory.GetFiles(Path.Combine(directory, "prompts"), "*.md", SearchOption.AllDirectories);
+
+        Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("delegation", "opencode.md"), StringComparison.Ordinal));
+        Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("delegation", "codex.md"), StringComparison.Ordinal));
+        Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("delegation", "pi.md"), StringComparison.Ordinal));
+        Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("spawn", "ship-target.md"), StringComparison.Ordinal));
+        Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("watch", "default.md"), StringComparison.Ordinal));
+
+        var sourceFiles = Directory.GetFiles(Path.Combine(directory, "src"), "*.cs", SearchOption.AllDirectories);
+        foreach (var sourceFile in sourceFiles)
+        {
+            var source = File.ReadAllText(sourceFile);
+            Assert.DoesNotContain("Operating contract:", source);
+            Assert.DoesNotContain("Operating boundaries:", source);
+            Assert.DoesNotContain("Please check whether the delegated work", source);
+        }
+    }
+
     private static string LocateRepoRoot(string startPath)
     {
         var path = Path.GetFullPath(startPath);

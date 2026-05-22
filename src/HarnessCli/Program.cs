@@ -499,24 +499,11 @@ internal static class Program
             ? Environment.CurrentDirectory
             : Path.GetFullPath(options.Directory);
 
-        return $"""
-Ship this target end-to-end without waiting for the coordinator to do implementation work.
-
-Target:
-{target}
-
-Repository:
-{directory}
-
-Operating boundaries:
-- You are the implementation worker for this target.
-- Work autonomously in the specified repository path.
-- Do not assume the coordinator will write code for you.
-- Do not invoke spawn/fan-out commands or create additional worker sessions.
-- Keep changes focused on the target.
-- Verify your work with the smallest relevant checks.
-- Your final handoff must include files changed, commands run, verification result, blockers, and recommended next action.
-""";
+        return PromptTemplates.Render("spawn/ship-target.md", new Dictionary<string, string>
+        {
+            ["target"] = target,
+            ["directory"] = directory
+        });
     }
 
     private static async Task<int> NewViaBackend(
@@ -1041,21 +1028,11 @@ Operating boundaries:
 
     private static string BuildHarnessPrompt(string prompt, Options options)
     {
-        var marker = options.SummaryMarker;
-        return $"""
-You are running as a delegated OpenCode pseudo-subagent.
-
-Task:
-{prompt}
-
-Operating contract:
-- Do the task autonomously within the available tools and context.
-- Prefer concise, factual work over broad exploration.
-- If you cannot complete something, say exactly what blocked it.
-- Your final assistant message must contain a complete handoff summary for the orchestrator.
-- Put the final handoff under this exact marker on its own line: {marker}
-- After the marker, include only the relevant findings, files changed/read, commands run, errors, and recommended next action.
-""";
+        return PromptTemplates.Render("delegation/opencode.md", new Dictionary<string, string>
+        {
+            ["task"] = prompt,
+            ["summary_marker"] = options.SummaryMarker
+        });
     }
 
     private static async Task<int> Status(OpenCodeClient client, Options options)
@@ -1382,11 +1359,7 @@ Operating contract:
 
     private static string DefaultWatchPrompt()
     {
-        return """
-Please check whether the delegated work in this OpenCode session is progressing correctly from this workspace.
-
-If work is progressing, briefly report the evidence. If it is stuck or failing, diagnose and fix it end-to-end where safe. Do not stop, kill, or restart unrelated OpenCode sessions or unrelated processes. Preserve unrelated local changes. Prefer existing workspace scripts/docs over ad hoc commands. Verify the fix and report what changed.
-""";
+        return PromptTemplates.Render("watch/default.md", new Dictionary<string, string>());
     }
 
     private static async Task<SessionState> PollUntilIdleAfterPrompt(OpenCodeClient client, string session, Options options, TimeSpan timeout, int anchorIndex)
