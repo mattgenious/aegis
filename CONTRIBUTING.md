@@ -6,6 +6,7 @@
 - `tests/HarnessCli.UnitTests/` is for pure unit tests.
 - `tests/HarnessCli.IntegrationTests/` is for CLI/process-level tests.
 - `docs/` contains product and architecture docs.
+- `prompts/` contains built-in agent prompt templates as markdown, grouped by theme/backend.
 
 The app binary remains `opencode-harness-cli` for compatibility.
 
@@ -16,6 +17,7 @@ The app binary remains `opencode-harness-cli` for compatibility.
 - Backend abstraction in `src/HarnessCli/Backends/`.
 - Shared domain/session types in `src/HarnessCli/Core/`.
 - Infrastructure helpers in `src/HarnessCli/Infrastructure/`.
+- Built-in prompt bodies must live under `prompts/**/*.md`; C# may render templates but must not hide system/delegation prompt text in string literals.
 
 ## File and member limits
 

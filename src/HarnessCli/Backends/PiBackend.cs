@@ -142,20 +142,11 @@ public sealed class PiBackend : ISessionBackend
 
     private static string BuildHarnessPrompt(string prompt, string marker)
     {
-        return $"""
-You are running as a delegated Pi pseudo-subagent.
-
-Task:
-{prompt}
-
-Operating contract:
-- Do the task autonomously within the available tools and context.
-- Prefer concise, factual work over broad exploration.
-- If you cannot complete something, say exactly what blocked it.
-- Your final handoff must contain a complete handoff summary for the orchestrator.
-- Put the final handoff under this exact marker on its own line: {marker}
-- After the marker, include only the relevant findings, files changed/read, commands run, errors, and recommended next action.
-""";
+        return PromptTemplates.Render("delegation/pi.md", new Dictionary<string, string>
+        {
+            ["task"] = prompt,
+            ["summary_marker"] = marker
+        });
     }
 
     public async Task<SessionStateSnapshot> GetSessionStateAsync(SessionRecord session, int anchorMessageIndex = -1, CancellationToken cancellationToken = default)
