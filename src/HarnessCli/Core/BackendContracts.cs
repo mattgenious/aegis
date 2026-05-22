@@ -49,6 +49,7 @@ public sealed record SessionRecord(
     ImmutableDictionary<string, string>? Metadata = null)
 {
     public ImmutableDictionary<string, string> Metadata { get; init; } = Metadata ?? ImmutableDictionary<string, string>.Empty;
+    public DateTimeOffset LastUpdatedUtc { get; init; } = CreatedAtUtc;
 }
 
 public sealed record SessionStateSnapshot(
