@@ -1,7 +1,9 @@
 using System.Collections.Immutable;
+using System.Text.Json;
 using Xunit;
 using HarnessCli.Core;
 using HarnessCli.Infrastructure;
+using HarnessCli.Backends;
 
 namespace HarnessCli.UnitTests;
 
@@ -189,6 +191,58 @@ public class DomainContractsTests
             var ex = await Assert.ThrowsAsync<UnknownSessionException>(() => service.RequireAsync("missing-session"));
             Assert.Equal("missing-session", ex.SessionId);
             Assert.Contains("Use a valid session", ex.Message);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CodexBackendCanCreateSessionAndParseSummaryFromPersistedHistory()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var backend = new CodexBackend();
+            var request = new CreateSessionRequest(
+                Title: "backend-session",
+                ParentSessionId: null,
+                Directory: tempDir);
+            var session = await backend.CreateSessionAsync(request);
+
+            var statusFile = session.BackendMetadataPath + ".status.json";
+            var messagesFile = session.BackendMetadataPath + ".messages.jsonl";
+
+            Assert.True(File.Exists(statusFile));
+            Assert.Equal(BackendKind.Codex, session.Backend);
+
+            var rawMessages = new[]
+            {
+                new
+                {
+                    Id = "msg_1",
+                    Role = "assistant",
+                    Text = "Task started\nFINAL HANDOFF\nImplemented requested logic.",
+                    PartId = "part_1",
+                    Timestamp = "2026-01-01T12:00:00+00:00"
+                }
+            };
+            await File.WriteAllTextAsync(messagesFile, JsonSerializer.Serialize(rawMessages));
+
+            var state = await backend.GetSessionStateAsync(session);
+            Assert.Equal("idle", state.EffectiveStatus);
+            Assert.True(state.HasFreshSummary);
+
+            var summary = await backend.ExtractSummaryAsync(session, "FINAL HANDOFF");
+            Assert.NotNull(summary);
+            Assert.Equal("msg_1", summary!.MessageId);
+            Assert.Equal("part_1", summary.PartId);
+            Assert.Equal("Implemented requested logic.", summary.Text);
         }
         finally
         {
