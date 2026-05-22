@@ -5,10 +5,19 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>HarnessCli</RootNamespace>
+    <PackageId>HarnessCli.Backends</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>mattgenious</Authors>
+    <Description>Reusable OpenCode, Codex, and Pi backend adapters plus orchestration services for harness-cli.</Description>
+    <RepositoryUrl>https://github.com/mattgenious/harness-cli</RepositoryUrl>
+    <PackageTags>agents;opencode;codex;pi;automation</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\HarnessCli.Core\HarnessCli.Core.csproj" />
+    <Content Include="..\..\prompts\**\*.md" Link="prompts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Pack="true" PackagePath="contentFiles\any\any\prompts\%(RecursiveDir)%(Filename)%(Extension)" PackageCopyToOutput="true" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

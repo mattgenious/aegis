@@ -47,6 +47,21 @@ public class CommandRulesTests
     }
 
     [Fact]
+    public void LibraryProjectsHavePackageMetadata()
+    {
+        var directory = LocateRepoRoot(Directory.GetCurrentDirectory());
+        var coreProject = File.ReadAllText(Path.Combine(directory, "src", "HarnessCli.Core", "HarnessCli.Core.csproj"));
+        var backendProject = File.ReadAllText(Path.Combine(directory, "src", "HarnessCli.Backends", "HarnessCli.Backends.csproj"));
+
+        Assert.Contains("<PackageId>HarnessCli.Core</PackageId>", coreProject);
+        Assert.Contains("<PackageId>HarnessCli.Backends</PackageId>", backendProject);
+        Assert.Contains("<Version>0.1.0</Version>", coreProject);
+        Assert.Contains("<Version>0.1.0</Version>", backendProject);
+        Assert.Contains("PackageCopyToOutput=\"true\"", coreProject);
+        Assert.Contains("PackageCopyToOutput=\"true\"", backendProject);
+    }
+
+    [Fact]
     public void BuiltInPromptsLiveAsMarkdownFiles()
     {
         var directory = LocateRepoRoot(Directory.GetCurrentDirectory());
