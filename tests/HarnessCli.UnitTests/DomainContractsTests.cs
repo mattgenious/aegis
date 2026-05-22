@@ -23,6 +23,14 @@ public class DomainContractsTests
     }
 
     [Fact]
+    public void BackendKindCanRenderOptionValues()
+    {
+        Assert.Equal("opencode", BackendKind.Opencode.ToOptionValue());
+        Assert.Equal("codex", BackendKind.Codex.ToOptionValue());
+        Assert.Equal("pi", BackendKind.Pi.ToOptionValue());
+    }
+
+    [Fact]
     public void PromptAndSessionContractsCaptureCanonicalMetadata()
     {
         var prompt = new PromptRequest(
@@ -243,6 +251,67 @@ public class DomainContractsTests
             Assert.Equal("msg_1", summary!.MessageId);
             Assert.Equal("part_1", summary.PartId);
             Assert.Equal("Implemented requested logic.", summary.Text);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SummaryExtractionRespectsAnchorInPersistedHistory()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var backend = new CodexBackend();
+            var request = new CreateSessionRequest("anchor-test", null, tempDir);
+            var session = await backend.CreateSessionAsync(request);
+
+            var messagesFile = session.BackendMetadataPath + ".messages.jsonl";
+            var rawMessages = new[]
+            {
+                new
+                {
+                    Id = "msg_1",
+                    Role = "user",
+                    Text = "first prompt",
+                    PartId = "part_1",
+                    Timestamp = "2026-01-01T12:00:00+00:00"
+                },
+                new
+                {
+                    Id = "msg_2",
+                    Role = "assistant",
+                    Text = "Task started\nFINAL HANDOFF\nold summary",
+                    PartId = "part_2",
+                    Timestamp = "2026-01-01T12:00:01+00:00"
+                },
+                new
+                {
+                    Id = "msg_3",
+                    Role = "user",
+                    Text = "new prompt after summary",
+                    PartId = "part_3",
+                    Timestamp = "2026-01-01T12:00:02+00:00"
+                },
+                new
+                {
+                    Id = "msg_4",
+                    Role = "assistant",
+                    Text = "Working on the new prompt without handoff yet",
+                    PartId = "part_4",
+                    Timestamp = "2026-01-01T12:00:03+00:00"
+                }
+            };
+            await File.WriteAllTextAsync(messagesFile, JsonSerializer.Serialize(rawMessages));
+
+            var summary = await backend.ExtractSummaryAsync(session, "FINAL HANDOFF", anchorMessageIndex: 2);
+            Assert.Null(summary);
         }
         finally
         {
