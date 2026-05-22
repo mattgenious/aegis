@@ -130,6 +130,33 @@ opencode-harness-cli abort --session ses_...
 opencode-harness-cli export --session ses_... --format md --output session-export.md
 ```
 
+## Backend Support Matrix
+
+The CLI now includes backend adapters for:
+
+- `opencode` (default): existing OpenCode HTTP API path with full command coverage (`ask`, `spawn`, `status`, `wait`, `watch`, `tail`, etc.).
+- `codex`: local command-path adapter (`codex`) with explicit session-local state files and JSON message extraction.
+- `pi`: local command-path adapter (`pi`) using JSON event output (`--mode json`) and message reconstruction.
+
+Current runtime support status:
+
+| Command | opencode | codex | pi |
+|---|---|---|---|
+| `ask` | ✅ | ⚙️ (adapter in place, command wiring pending) | ⚙️ (adapter in place, command wiring pending) |
+| `last-summary` | ✅ | ⚙️ (adapter in place, command wiring pending) | ⚙️ (adapter in place, command wiring pending) |
+| `status` | ✅ | ⚙️ (adapter in place, command wiring pending) | ⚙️ (adapter in place, command wiring pending) |
+
+Legend: ✅ command fully wired in this release, ⚙️ adapter exists and is tested but full command wiring is the next integration step.
+
+## Migration Notes
+
+- Default backend remains `opencode`; existing invocation patterns do not change.
+- `--backend` currently accepts `opencode`, `codex`, and `pi` and is validated at parse time.
+- OpenCode semantics remain the compatibility baseline for prompt wrapping, handoff markers, and summary extraction behavior.
+- Codex and Pi adapters use local persistent session state under `.harness-cli/<backend>/...` and currently expose explicit guidance when unsupported event shapes are detected.
+- Use `--raw` when you want a backend to receive prompt text verbatim.
+- See [docs/multi-backend-rollout.md](./docs/multi-backend-rollout.md) for staged parity status and rollout checklist.
+
 ## Safe Probe
 
 Use `--no-reply` to write a user message without calling a model:
