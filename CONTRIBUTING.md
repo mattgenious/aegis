@@ -2,7 +2,8 @@
 
 ## Codebase structure
 
-- `src/HarnessCli/` is the application code.
+- `src/HarnessCli.Core/` contains reusable contracts, state normalization, and prompt rendering.
+- `src/HarnessCli/` is the CLI application code.
 - `tests/HarnessCli.UnitTests/` is for pure unit tests.
 - `tests/HarnessCli.IntegrationTests/` is for CLI/process-level tests.
 - `docs/` contains product and architecture docs.
@@ -15,7 +16,7 @@ The app binary remains `opencode-harness-cli` for compatibility.
 - Keep root bootstrap in `src/HarnessCli/Program.cs` minimal.
 - Command handlers should live in `src/HarnessCli/Commands/`.
 - Backend abstraction in `src/HarnessCli/Backends/`.
-- Shared domain/session types in `src/HarnessCli/Core/`.
+- Shared domain/session types in `src/HarnessCli.Core/Core/`.
 - Infrastructure helpers in `src/HarnessCli/Infrastructure/`.
 - Built-in prompt bodies must live under `prompts/**/*.md`; C# may render templates but must not hide system/delegation prompt text in string literals.
 

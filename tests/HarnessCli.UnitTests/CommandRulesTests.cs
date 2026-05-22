@@ -15,6 +15,20 @@ public class CommandRulesTests
     }
 
     [Fact]
+    public void CoreContractsLiveInReusableLibrary()
+    {
+        var directory = LocateRepoRoot(Directory.GetCurrentDirectory());
+        var coreProject = Path.Combine(directory, "src", "HarnessCli.Core", "HarnessCli.Core.csproj");
+        var cliProject = Path.Combine(directory, "src", "HarnessCli", "OpencodeHarnessCli.csproj");
+        var cliProjectText = File.ReadAllText(cliProject);
+
+        Assert.True(File.Exists(coreProject), "HarnessCli.Core must exist as a reusable library project.");
+        Assert.Contains("HarnessCli.Core.csproj", cliProjectText);
+        Assert.True(File.Exists(Path.Combine(directory, "src", "HarnessCli.Core", "Core", "BackendContracts.cs")));
+        Assert.False(Directory.Exists(Path.Combine(directory, "src", "HarnessCli", "Core")));
+    }
+
+    [Fact]
     public void BuiltInPromptsLiveAsMarkdownFiles()
     {
         var directory = LocateRepoRoot(Directory.GetCurrentDirectory());
