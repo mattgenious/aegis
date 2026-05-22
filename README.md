@@ -142,9 +142,14 @@ Current runtime support status:
 
 | Command | opencode | codex | pi |
 |---|---|---|---|
+| `new` | ✅ | ✅ | ✅ |
+| `latest` | ✅ | ✅ | ✅ |
 | `ask` | ✅ | ✅ | ✅ |
+| `messages` | ✅ | ✅ | ✅ |
+| `wait` | ✅ | ✅ | ✅ |
 | `last-summary` | ✅ | ✅ | ✅ |
 | `status` | ✅ | ✅ | ✅ |
+| `abort` | ✅ | ✅ | ✅ |
 
 Legend: ✅ command fully wired in this release, ⚙️ adapter exists and is tested but full command wiring is the next integration step.
 

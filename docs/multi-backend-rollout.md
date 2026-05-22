@@ -3,18 +3,19 @@
 ## Current status
 
 - **opencode**: production command coverage.
-- **codex**: adapter implemented, command routing pending.
-- **pi**: adapter implemented (`pi --mode json` stream parsing + session-local persistence), command routing pending.
+- **codex**: adapter implemented and primary CLI command-routing complete (`new`, `latest`, `messages`, `wait`, `abort`, `ask`, `status`, `last-summary`).
+- **pi**: adapter implemented (`pi --mode json` stream parsing + session-local persistence) with primary CLI command-routing complete (`new`, `latest`, `messages`, `wait`, `abort`, `ask`, `status`, `last-summary`).
 
 ## Rollout checklist
 
 - [x] Add backend contracts (`ISessionBackend`, backend kinds, shared message/state contracts).
 - [x] Add shared registry and session metadata support.
 - [x] Implement adapter abstractions for all target backends.
-- [ ] Wire all CLI commands to route through the abstraction for codex/pi.
+- [x] Wire all CLI session-oriented commands to route through the abstraction for codex/pi.
 - [ ] Add end-to-end CLI command parity tests for backend-routing.
-- [ ] Expand README command examples with live backend examples once command routing lands.
+- [ ] Expand README command examples with live backend examples once command routing is validated in both adapters.
 - [x] Wire ask/status/last-summary through backends for codex/pi.
+- [x] Wire new/latest/messages/wait/abort through backends for codex/pi.
 
 ## Backend behavior differences
 
