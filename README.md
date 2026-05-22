@@ -7,6 +7,7 @@
 - `src/HarnessCli/` – main CLI application source
 - `tests/HarnessCli.UnitTests/` – unit tests
 - `tests/HarnessCli.IntegrationTests/` – integration tests
+- `prompts/` – markdown source files for built-in agent prompts
 
 Conventions and coding standards are documented in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
