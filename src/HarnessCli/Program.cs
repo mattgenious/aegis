@@ -20,6 +20,37 @@ internal static class Program
         WriteIndented = true
     };
 
+    private static readonly AgentHarnessConfiguration DefaultAgentConfiguration = new()
+    {
+        DefaultBackend = BackendKind.Opencode,
+        Profiles = new Dictionary<string, AgentModelProfile>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["fast"] = new AgentModelProfile
+            {
+                Backend = BackendKind.Opencode,
+                ModelProvider = "github-copilot",
+                Model = "gpt-5.4-mini",
+                Variant = "low",
+                Timeout = TimeSpan.FromMinutes(5)
+            },
+            ["cheap"] = new AgentModelProfile
+            {
+                Backend = BackendKind.Opencode,
+                ModelProvider = "opencode",
+                Model = "deepseek-v4-flash-free",
+                Timeout = TimeSpan.FromMinutes(5)
+            },
+            ["deep"] = new AgentModelProfile
+            {
+                Backend = BackendKind.Opencode,
+                ModelProvider = "github-copilot",
+                Model = "gpt-5.5",
+                Variant = "high",
+                Timeout = TimeSpan.FromMinutes(20)
+            }
+        }
+    };
+
     public static async Task<int> Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
@@ -46,9 +77,11 @@ internal static class Program
             }
 
             var options = Options.Parse(args.Skip(1));
+            var resolvedProfile = ResolveAgentProfile(options);
+            options.ApplyResolvedProfile(resolvedProfile);
             using var http = CreateHttpClient(options.Server);
             var client = new OpenCodeClient(http);
-            var backend = options.BackendKind;
+            var backend = resolvedProfile.Backend;
 
             return await RouteCommandToBackend(backend, command, client, http, options);
         }
@@ -140,6 +173,41 @@ internal static class Program
             BackendKind.Pi => new PiBackend(),
             _ => new OpencodeBackend(client)
         };
+
+    private static ResolvedAgentProfile ResolveAgentProfile(Options options)
+    {
+        BackendKind? backendOverride = null;
+        var backendValue = options.Backend ?? options.Engine;
+        if (!string.IsNullOrWhiteSpace(backendValue))
+        {
+            if (!BackendKindExtensions.TryParse(backendValue, out var backendKind))
+            {
+                throw new ArgumentException($"Unsupported backend '{backendValue}'. Use --backend opencode, codex, or pi.");
+            }
+
+            backendOverride = backendKind;
+        }
+
+        var resolved = new AgentProfileResolver(DefaultAgentConfiguration).Resolve(new AgentProfileSelection
+        {
+            Profile = options.Profile,
+            Backend = backendOverride,
+            Model = options.Model,
+            Variant = options.Variant,
+            Agent = options.Agent,
+            System = options.System,
+            Timeout = options.TimeoutWasProvided ? TimeSpan.FromSeconds(options.TimeoutSeconds) : null
+        });
+
+        if (resolved.Backend == BackendKind.Opencode
+            && !string.IsNullOrWhiteSpace(resolved.Model)
+            && string.IsNullOrWhiteSpace(resolved.ModelProvider))
+        {
+            throw new ArgumentException("OpenCode model selection must use provider/model, for example github-copilot/gpt-5.5.");
+        }
+
+        return resolved;
+    }
 
     private static Task<int> RouteOpenCodeCommand(
         string command,
@@ -798,23 +866,17 @@ internal static class Program
                     ? PromptSourceKind.Stdin
                     : PromptSourceKind.Inline;
 
-        (string Provider, string Model, string? Variant) model = (string.Empty, string.Empty, null);
-        if (!string.IsNullOrWhiteSpace(options.Model))
-        {
-            model = ParseModel(options.Model);
-        }
-
         return new PromptRequest(
             Text: prompt,
             SourceKind: source,
             SourceLocation: source == PromptSourceKind.File ? options.PromptFile : null,
-            ModelProvider: model.Provider == string.Empty ? null : model.Provider,
-            Model: model.Model == string.Empty ? options.Model : model.Model,
-            Variant: model.Variant ?? options.Variant,
+            ModelProvider: options.ResolvedModelProvider,
+            Model: options.ResolvedModel,
+            Variant: options.ResolvedVariant,
             SummaryMarker: options.SummaryMarker,
             Directory: options.Directory,
-            Agent: options.Agent,
-            System: options.System,
+            Agent: options.ResolvedAgent,
+            System: options.ResolvedSystem,
             NoReply: options.NoReply,
             Raw: options.Raw,
             Options: null);
@@ -1150,23 +1212,21 @@ internal static class Program
 
     private static void AddPromptMetadata(JsonObject body, Options options)
     {
-        if (!string.IsNullOrWhiteSpace(options.Agent)) body["agent"] = options.Agent;
-        if (!string.IsNullOrWhiteSpace(options.System)) body["system"] = options.System;
+        if (!string.IsNullOrWhiteSpace(options.ResolvedAgent)) body["agent"] = options.ResolvedAgent;
+        if (!string.IsNullOrWhiteSpace(options.ResolvedSystem)) body["system"] = options.ResolvedSystem;
         if (options.NoReply) body["noReply"] = true;
-        if (!string.IsNullOrWhiteSpace(options.Model))
+        if (!string.IsNullOrWhiteSpace(options.ResolvedModel))
         {
-            var model = ParseModel(options.Model);
             body["model"] = new JsonObject
             {
-                ["providerID"] = model.Provider,
-                ["modelID"] = model.Model
+                ["providerID"] = options.ResolvedModelProvider,
+                ["modelID"] = options.ResolvedModel
             };
-            var variant = options.Variant ?? model.Variant;
-            if (!string.IsNullOrWhiteSpace(variant)) body["variant"] = variant;
+            if (!string.IsNullOrWhiteSpace(options.ResolvedVariant)) body["variant"] = options.ResolvedVariant;
         }
-        else if (!string.IsNullOrWhiteSpace(options.Variant))
+        else if (!string.IsNullOrWhiteSpace(options.ResolvedVariant))
         {
-            body["variant"] = options.Variant;
+            body["variant"] = options.ResolvedVariant;
         }
     }
 
@@ -1558,6 +1618,7 @@ internal static class Program
             ["System"] = "extra system",
             ["NoReply"] = "true"
         });
+        metadataOptions.ApplyResolvedProfile(ResolveAgentProfile(metadataOptions));
         var rawBody = RawPromptBody("watch prompt", metadataOptions);
         if (rawBody["agent"]?.GetValue<string>() != "build") return Fail("self-test failed: raw watch prompt lost agent metadata.");
         if (rawBody["system"]?.GetValue<string>() != "extra system") return Fail("self-test failed: raw watch prompt lost system metadata.");
@@ -1569,21 +1630,6 @@ internal static class Program
 
         WriteJson(new JsonObject { ["status"] = "passed" });
         return 0;
-    }
-
-    private static (string Provider, string Model, string? Variant) ParseModel(string model)
-    {
-        var slash = model.IndexOf('/');
-        if (slash <= 0 || slash == model.Length - 1)
-        {
-            throw new ArgumentException("--model must be in provider/model format, for example github-copilot/gpt-5.4-mini.");
-        }
-
-        var remainder = model[(slash + 1)..];
-        var variantSlash = remainder.LastIndexOf('/');
-        return variantSlash > 0 && variantSlash < remainder.Length - 1
-            ? (model[..slash], remainder[..variantSlash], remainder[(variantSlash + 1)..])
-            : (model[..slash], remainder, null);
     }
 
     private static string ShortTitle(string prompt)
@@ -1651,7 +1697,7 @@ Usage:
   opencode-harness-cli new --title TITLE [--parent ses_...]
   opencode-harness-cli spawn --target TARGET [--target TARGET...] [--model provider/model] [--directory PATH]
   opencode-harness-cli latest [--search TEXT] [--limit 20]
-  opencode-harness-cli ask --prompt TEXT [--model provider/model] [--variant low] [--agent build] [--title TITLE]
+  opencode-harness-cli ask --prompt TEXT [--profile fast|cheap|deep] [--model provider/model] [--variant low] [--agent build] [--title TITLE]
   opencode-harness-cli ask --prompt-file task.md --timeout 600 --model github-copilot/gpt-5.4-mini
   opencode-harness-cli ask --prompt-file task.md --async --model github-copilot/gpt-5.4-mini
   opencode-harness-cli status [--session ses_...]
@@ -1865,6 +1911,7 @@ Options:
   --title TITLE           Title for a newly created session.
   --prompt TEXT           Inline prompt.
   --prompt-file FILE      Read prompt from a file.
+  --profile NAME          Built-in backend/model profile: fast, cheap, or deep.
   --model provider/model  Model metadata for OpenCode, for example github-copilot/gpt-5.5.
   --variant NAME          Provider model variant/reasoning level.
   --reasoning LEVEL       Alias for --variant.
@@ -1879,6 +1926,7 @@ Options:
   --directory PATH        Project directory associated with the request.
 
 Examples:
+  opencode-harness-cli ask --profile fast --prompt-file task.md
   opencode-harness-cli ask --prompt-file task.md --timeout 900 --model github-copilot/gpt-5.5
   opencode-harness-cli ask --async --prompt-file task.md --model github-copilot/gpt-5.4-mini --variant low
   opencode-harness-cli ask --session ses_... --no-reply --prompt "Context only."
@@ -1895,6 +1943,7 @@ Options:
   --resume-session X=Y       Reuse existing session Y for target X.
   --resume-session-json JSON JSON object mapping target text to session id.
   --directory PATH           Repository/workspace path for workers.
+  --profile NAME             Built-in backend/model profile: fast, cheap, or deep.
   --model provider/model     Model metadata for workers.
   --variant NAME             Provider model variant/reasoning level.
   --wait                     Wait for each worker's final handoff.
@@ -2102,6 +2151,7 @@ Examples:
         public string? Parent { get; private set; }
         public string? Agent { get; private set; }
         public string? Model { get; private set; }
+        public string? Profile { get; private set; }
         public string? Session { get; private set; }
         public string? Prompt { get; private set; }
         public string? PromptFile { get; private set; }
@@ -2132,18 +2182,22 @@ Examples:
         public int? MaxDurationMinutes { get; private set; }
         public int TimeoutSeconds { get; private set; } = 300;
         public bool TimeoutWasProvided { get; private set; }
+        public string? ResolvedModelProvider { get; private set; }
+        public string? ResolvedModel { get; private set; }
+        public string? ResolvedVariant { get; private set; }
+        public string? ResolvedAgent { get; private set; }
+        public string? ResolvedSystem { get; private set; }
 
-        public BackendKind BackendKind
+        public void ApplyResolvedProfile(ResolvedAgentProfile profile)
         {
-            get
+            ResolvedModelProvider = profile.ModelProvider;
+            ResolvedModel = profile.Model;
+            ResolvedVariant = profile.Variant;
+            ResolvedAgent = profile.Agent;
+            ResolvedSystem = profile.System;
+            if (!TimeoutWasProvided && profile.Timeout is not null)
             {
-                var backendValue = Backend ?? Engine ?? "opencode";
-                if (!BackendKindExtensions.TryParse(backendValue, out var backendKind))
-                {
-                    throw new ArgumentException($"Unsupported backend '{backendValue}'. Use --backend opencode, codex, or pi.");
-                }
-
-                return backendKind;
+                TimeoutSeconds = Math.Max(1, (int)Math.Ceiling(profile.Timeout.Value.TotalSeconds));
             }
         }
 
@@ -2175,6 +2229,7 @@ Examples:
                     case "--parent": options.Parent = Value(queue, arg); break;
                     case "--agent": options.Agent = Value(queue, arg); break;
                     case "--model": options.Model = Value(queue, arg); break;
+                    case "--profile": options.Profile = Value(queue, arg); break;
                     case "--session": options.Session = Value(queue, arg); options.Sessions.Add(options.Session); break;
                     case "--prompt": options.Prompt = Value(queue, arg); break;
                     case "--prompt-file": options.PromptFile = Value(queue, arg); break;
