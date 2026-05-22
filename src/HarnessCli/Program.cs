@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Collections.Immutable;
 using HarnessCli.Backends;
 using HarnessCli.Core;
 using HarnessCli.Infrastructure;
@@ -120,6 +121,11 @@ internal static class Program
 
         return command switch
         {
+            "new" => NewViaBackend(backendService, registry, options),
+            "latest" => LatestViaBackend(backendService, registry, options),
+            "messages" => MessagesViaBackend(backendService, registry, options),
+            "wait" => WaitViaBackend(backendService, registry, options),
+            "abort" => AbortViaBackend(backendService, registry, options),
             "ask" => AskViaBackend(backendService, registry, options),
             "status" => StatusViaBackend(backendService, registry, options),
             "last-summary" => LastSummaryViaBackend(backendService, registry, options),
@@ -497,6 +503,164 @@ Operating boundaries:
 """;
     }
 
+    private static async Task<int> NewViaBackend(
+        ISessionBackend backend,
+        SessionRegistryService registry,
+        Options options)
+    {
+        var request = new CreateSessionRequest(options.Title, options.Parent, options.Directory);
+        var created = await backend.CreateSessionAsync(request);
+
+        var metadata = created.Metadata;
+        if (!string.IsNullOrWhiteSpace(options.Title))
+        {
+            metadata = metadata.SetItem("title", options.Title);
+        }
+        if (!string.IsNullOrWhiteSpace(options.Parent))
+        {
+            metadata = metadata.SetItem("parent", options.Parent);
+        }
+
+        var stored = await registry.CreateAndStoreAsync(
+            backend.Kind,
+            created.BackendSessionId,
+            created.CreatedAtUtc,
+            created.Directory,
+            created.BackendMetadataPath,
+            metadata);
+
+        WriteJson(new JsonObject
+        {
+            ["sessionID"] = stored.SessionId,
+            ["backend"] = stored.Backend.ToOptionValue(),
+            ["backendSessionID"] = stored.BackendSessionId,
+            ["directory"] = stored.Directory,
+            ["metadata"] = JsonSerializer.SerializeToNode(metadata)
+        });
+
+        return 0;
+    }
+
+    private static async Task<int> LatestViaBackend(
+        ISessionBackend backend,
+        SessionRegistryService registry,
+        Options options)
+    {
+        var sessions = await registry.GetForBackendAsync(backend.Kind);
+        if (sessions.Count == 0)
+        {
+            return Fail($"No sessions found for backend '{backend.Kind.ToOptionValue()}'");
+        }
+
+        var filtered = sessions.Where(session =>
+            string.IsNullOrWhiteSpace(options.Search)
+            || session.SessionId.Contains(options.Search, StringComparison.OrdinalIgnoreCase)
+            || session.Metadata.TryGetValue("title", out var title)
+                && !string.IsNullOrWhiteSpace(title)
+                && title.Contains(options.Search, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (filtered.Count == 0)
+        {
+            return Fail($"No sessions found for backend '{backend.Kind.ToOptionValue()}' with search '{options.Search}'.");
+        }
+
+        var limit = options.Limit > 0 ? options.Limit : 20;
+        var latest = filtered
+            .OrderByDescending(session => session.CreatedAtUtc)
+            .Take(filtered.Count > 0 ? Math.Min(limit, filtered.Count) : limit)
+            .ToList();
+
+        var payload = new JsonArray();
+        foreach (var session in latest)
+        {
+            payload.Add(new JsonObject
+            {
+                ["sessionID"] = session.SessionId,
+                ["backend"] = session.Backend.ToOptionValue(),
+                ["backendSessionID"] = session.BackendSessionId,
+                ["directory"] = session.Directory
+            });
+        }
+
+        if (!options.All)
+        {
+            WriteJson(payload[0]);
+            return 0;
+        }
+
+        WriteJson(payload);
+        return 0;
+    }
+
+    private static async Task<int> MessagesViaBackend(
+        ISessionBackend backend,
+        SessionRegistryService registry,
+        Options options)
+    {
+        var session = await ResolveBackendSessionAsync(backend, registry, Require(options.Session, "--session"));
+        var limit = options.Limit > 0 ? options.Limit : 20;
+        var messages = await backend.GetMessagesAsync(session, limit);
+        var output = new JsonArray();
+        foreach (var message in messages)
+        {
+            output.Add(BuildBackendMessageJson(message));
+        }
+
+        WriteJson(output);
+        return 0;
+    }
+
+    private static async Task<int> WaitViaBackend(
+        ISessionBackend backend,
+        SessionRegistryService registry,
+        Options options)
+    {
+        if (options.TimeoutWasProvided)
+        {
+            return Fail("wait does not accept --timeout. It passively waits until the backend reports an idle status.");
+        }
+
+        var session = await ResolveBackendSessionAsync(backend, registry, Require(options.Session, "--session"));
+        while (true)
+        {
+            var state = await backend.GetSessionStateAsync(session);
+            if (state.ApiStatus is null || state.ApiStatus.StartsWith("idle", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteJson(BuildSessionStateJson(state));
+                return 0;
+            }
+
+            if (state.ApiStatus.StartsWith("error:", StringComparison.Ordinal))
+            {
+                return Fail(state.ApiStatus);
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    private static async Task<int> AbortViaBackend(
+        ISessionBackend backend,
+        SessionRegistryService registry,
+        Options options)
+    {
+        var session = await ResolveBackendSessionAsync(backend, registry, Require(options.Session, "--session"));
+        var result = await backend.AbortAsync(session);
+        if (!result.IsSuccess)
+        {
+            return Fail(result.Error ?? result.Message ?? "Abort command failed.");
+        }
+
+        WriteJson(new JsonObject
+        {
+            ["sessionID"] = session.SessionId,
+            ["backend"] = backend.Kind.ToOptionValue(),
+            ["status"] = result.Message ?? "aborted"
+        });
+        return 0;
+    }
+
     private static async Task<int> Ask(OpenCodeClient client, Options options)
     {
         var prompt = await ReadPrompt(options);
@@ -696,14 +860,39 @@ Operating boundaries:
 
         var createRequest = new CreateSessionRequest(options.Title, options.Parent, options.Directory);
         var session = await backend.CreateSessionAsync(createRequest);
+        var metadata = session.Metadata;
+        if (!string.IsNullOrWhiteSpace(options.Title))
+        {
+            metadata = metadata.SetItem("title", options.Title);
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.Parent))
+        {
+            metadata = metadata.SetItem("parent", options.Parent);
+        }
+
         var created = await registry.CreateAndStoreAsync(
             backend.Kind,
             session.BackendSessionId,
             session.CreatedAtUtc,
             session.Directory,
             session.BackendMetadataPath,
-            session.Metadata);
+            metadata);
         return created;
+    }
+
+    private static async Task<SessionRecord> ResolveBackendSessionAsync(
+        ISessionBackend backend,
+        SessionRegistryService registry,
+        string sessionId)
+    {
+        var session = await registry.RequireAsync(sessionId);
+        if (session.Backend != backend.Kind)
+        {
+            throw new InvalidOperationException($"Session {session.SessionId} belongs to '{session.Backend.ToOptionValue()}' but backend '{backend.Kind.ToOptionValue()}' was requested.");
+        }
+
+        return session;
     }
 
     private static async Task<SummaryResult?> ExtractBackendSummaryAsync(
@@ -713,6 +902,18 @@ Operating boundaries:
         int anchorIndex)
     {
         return await backend.ExtractSummaryAsync(session, options.SummaryMarker, anchorIndex);
+    }
+
+    private static JsonObject BuildBackendMessageJson(BackendMessage message)
+    {
+        return new JsonObject
+        {
+            ["id"] = message.Id,
+            ["role"] = message.Role,
+            ["text"] = message.Text,
+            ["partId"] = message.PartId,
+            ["timestamp"] = message.Timestamp?.ToString("O")
+        };
     }
 
     private static async Task<int> GetLatestUserMessageIndexAsync(ISessionBackend backend, SessionRecord session)
