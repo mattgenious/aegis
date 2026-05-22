@@ -29,3 +29,26 @@ dotnet add package HarnessCli.Backends \
 `HarnessCli.Backends` depends on `HarnessCli.Core`, so consumers normally reference only the backend package unless they need contracts only.
 
 Prompt markdown files are packed as content files and copied to the consumer output so `PromptTemplates` can resolve them at runtime. They are included in both packages because NuGet content files from transitive dependencies are not copied for every consumer shape.
+
+## Baton-Facing API Shape
+
+Consumers should depend on `IAgentHarness` rather than OpenCode HTTP, Codex CLI, or Pi CLI details:
+
+```csharp
+AgentRunResult result = await harness.AskAsync(new AgentRunRequest
+{
+    Prompt = "Ship issue #123 and report the handoff.",
+    Title = "Ship: issue #123",
+    Model = "gpt-5.5",
+    Timeout = TimeSpan.FromMinutes(10)
+});
+
+if (!result.IsSuccess)
+{
+    throw new InvalidOperationException(result.Error ?? result.Message);
+}
+
+Console.WriteLine(result.Summary?.Text);
+```
+
+Backend construction is still explicit at this stage. Backend/model profile configuration is planned in the next slice.
