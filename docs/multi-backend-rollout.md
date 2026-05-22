@@ -14,6 +14,7 @@
 - [ ] Wire all CLI commands to route through the abstraction for codex/pi.
 - [ ] Add end-to-end CLI command parity tests for backend-routing.
 - [ ] Expand README command examples with live backend examples once command routing lands.
+- [x] Wire ask/status/last-summary through backends for codex/pi.
 
 ## Backend behavior differences
 
