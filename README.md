@@ -167,7 +167,7 @@ Legend: ✅ command fully wired in this release, ⚙️ adapter exists and is te
 - Default backend remains `opencode`; existing invocation patterns do not change.
 - `--backend` currently accepts `opencode`, `codex`, and `pi` and is validated at parse time.
 - OpenCode semantics remain the compatibility baseline for prompt wrapping, handoff markers, and summary extraction behavior.
-- Codex and Pi adapters use local persistent session state under `.harness-cli/<backend>/...` and currently expose explicit guidance when unsupported event shapes are detected.
+- Codex and Pi adapters use local persistent backend state outside the target repository by default, under the platform app data directory or `HARNESS_CLI_BACKEND_STATE_DIR` when set. This avoids dirtying the repo and prevents delegated agents from deleting their own session transcript.
 - Use `--raw` when you want a backend to receive prompt text verbatim.
 - See [docs/multi-backend-rollout.md](./docs/multi-backend-rollout.md) for staged parity status and rollout checklist.
 

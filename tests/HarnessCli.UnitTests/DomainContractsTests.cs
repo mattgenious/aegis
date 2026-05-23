@@ -1,9 +1,9 @@
 using System.Collections.Immutable;
 using System.Text.Json;
-using Xunit;
+using HarnessCli.Backends;
 using HarnessCli.Core;
 using HarnessCli.Infrastructure;
-using HarnessCli.Backends;
+using Xunit;
 
 namespace HarnessCli.UnitTests;
 
@@ -137,13 +137,15 @@ public class DomainContractsTests
                 Backend: BackendKind.Pi,
                 BackendSessionId: "pi-old",
                 CreatedAtUtc: DateTimeOffset.UtcNow.AddHours(-10),
-                Metadata: ImmutableDictionary<string, string>.Empty) { LastUpdatedUtc = DateTimeOffset.UtcNow.AddHours(-10) };
+                Metadata: ImmutableDictionary<string, string>.Empty)
+            { LastUpdatedUtc = DateTimeOffset.UtcNow.AddHours(-10) };
             var recentSession = new SessionRecord(
                 SessionId: "ses-recent",
                 Backend: BackendKind.Pi,
                 BackendSessionId: "pi-recent",
                 CreatedAtUtc: DateTimeOffset.UtcNow.AddMinutes(-10),
-                Metadata: ImmutableDictionary<string, string>.Empty) { LastUpdatedUtc = DateTimeOffset.UtcNow.AddMinutes(-10) };
+                Metadata: ImmutableDictionary<string, string>.Empty)
+            { LastUpdatedUtc = DateTimeOffset.UtcNow.AddMinutes(-10) };
             var codexSession = new SessionRecord(
                 SessionId: "ses-codex",
                 Backend: BackendKind.Codex,
@@ -213,10 +215,11 @@ public class DomainContractsTests
     public async Task CodexBackendCanCreateSessionAndParseSummaryFromPersistedHistory()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var stateRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(tempDir);
-            var backend = new CodexBackend();
+            var backend = new CodexBackend(stateRoot);
             var request = new CreateSessionRequest(
                 Title: "backend-session",
                 ParentSessionId: null,
@@ -227,6 +230,7 @@ public class DomainContractsTests
             var messagesFile = session.BackendMetadataPath + ".messages.jsonl";
 
             Assert.True(File.Exists(statusFile));
+            Assert.False(Directory.Exists(Path.Combine(tempDir, ".harness-cli")));
             Assert.Equal(BackendKind.Codex, session.Backend);
 
             var rawMessages = new[]
@@ -258,6 +262,11 @@ public class DomainContractsTests
             {
                 Directory.Delete(tempDir, true);
             }
+
+            if (Directory.Exists(stateRoot))
+            {
+                Directory.Delete(stateRoot, true);
+            }
         }
     }
 
@@ -265,10 +274,11 @@ public class DomainContractsTests
     public async Task SummaryExtractionRespectsAnchorInPersistedHistory()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var stateRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(tempDir);
-            var backend = new CodexBackend();
+            var backend = new CodexBackend(stateRoot);
             var request = new CreateSessionRequest("anchor-test", null, tempDir);
             var session = await backend.CreateSessionAsync(request);
 
@@ -319,6 +329,11 @@ public class DomainContractsTests
             {
                 Directory.Delete(tempDir, true);
             }
+
+            if (Directory.Exists(stateRoot))
+            {
+                Directory.Delete(stateRoot, true);
+            }
         }
     }
 
@@ -326,10 +341,11 @@ public class DomainContractsTests
     public async Task PiBackendCanCreateSessionAndParseSummaryFromPersistedHistory()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var stateRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(tempDir);
-            var backend = new PiBackend();
+            var backend = new PiBackend(stateRoot: stateRoot);
             var request = new CreateSessionRequest(
                 Title: "pi-backend-session",
                 ParentSessionId: null,
@@ -340,6 +356,7 @@ public class DomainContractsTests
             var messagesFile = session.BackendMetadataPath + ".messages.jsonl";
 
             Assert.True(File.Exists(statusFile));
+            Assert.False(Directory.Exists(Path.Combine(tempDir, ".harness-cli")));
             Assert.Equal(BackendKind.Pi, session.Backend);
 
             var rawMessages = new[]
@@ -371,6 +388,11 @@ public class DomainContractsTests
             {
                 Directory.Delete(tempDir, true);
             }
+
+            if (Directory.Exists(stateRoot))
+            {
+                Directory.Delete(stateRoot, true);
+            }
         }
     }
 
@@ -378,11 +400,13 @@ public class DomainContractsTests
     public async Task PiBackendPostPromptWithMissingBinaryReturnsGuidance()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var stateRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
         {
             Directory.CreateDirectory(tempDir);
-            var backend = new PiBackend("/no/such/pi-binary");
+            var backend = new PiBackend("/no/such/pi-binary", stateRoot);
             var session = await backend.CreateSessionAsync(new CreateSessionRequest("pi-session", null, tempDir));
+            Directory.Delete(Path.GetDirectoryName(session.BackendMetadataPath)!, true);
             var request = new PromptRequest(
                 Text: "Run a quick check",
                 SourceKind: PromptSourceKind.Inline,
@@ -398,6 +422,11 @@ public class DomainContractsTests
             if (Directory.Exists(tempDir))
             {
                 Directory.Delete(tempDir, true);
+            }
+
+            if (Directory.Exists(stateRoot))
+            {
+                Directory.Delete(stateRoot, true);
             }
         }
     }

@@ -1,8 +1,8 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.ComponentModel;
 using HarnessCli.Core;
 
 namespace HarnessCli.Backends;
@@ -14,14 +14,16 @@ public sealed class PiBackend : ISessionBackend
     private const string StatusSuffix = ".status.json";
 
     private readonly string _piBinary;
+    private readonly string? _stateRoot;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
     };
 
-    public PiBackend(string? piBinary = null)
+    public PiBackend(string? piBinary = null, string? stateRoot = null)
     {
         _piBinary = string.IsNullOrWhiteSpace(piBinary) ? PiBinary : piBinary;
+        _stateRoot = stateRoot;
     }
 
     public BackendKind Kind => BackendKind.Pi;
@@ -272,30 +274,24 @@ public sealed class PiBackend : ISessionBackend
         return CommandResult.Failure(1, "Session did not exist.");
     }
 
-    private static string ResolveSessionPath(string backendSessionId, string? baseDirectory)
+    private string ResolveSessionPath(string backendSessionId, string? baseDirectory)
     {
-        var root = Path.Combine(
-            string.IsNullOrWhiteSpace(baseDirectory)
-                ? Path.GetTempPath()
-                : Path.GetFullPath(baseDirectory),
-            ".harness-cli",
-            "pi");
-        Directory.CreateDirectory(root);
-        return Path.Combine(root, backendSessionId);
+        return BackendStatePaths.ResolveSessionPath("pi", backendSessionId, baseDirectory, _stateRoot);
     }
 
-    private static string ResolveStatusPath(SessionRecord session)
+    private string ResolveStatusPath(SessionRecord session)
     {
         return (session.BackendMetadataPath ?? ResolveSessionPath(session.BackendSessionId, session.Directory)) + StatusSuffix;
     }
 
-    private static string ResolveMessagesPath(SessionRecord session)
+    private string ResolveMessagesPath(SessionRecord session)
     {
         return (session.BackendMetadataPath ?? ResolveSessionPath(session.BackendSessionId, session.Directory)) + MessageLineSuffix;
     }
 
     private async Task PersistMessagesAsync(string messagesPath, List<PiStoredMessage> messages, CancellationToken cancellationToken)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(messagesPath)!);
         List<PiStoredMessage> existing = [];
         if (File.Exists(messagesPath))
         {
@@ -312,6 +308,7 @@ public sealed class PiBackend : ISessionBackend
 
     private static async Task SaveStatusAsync(string statusPath, string status, CancellationToken cancellationToken)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(statusPath)!);
         var payload = new PiStatus(status, DateTimeOffset.UtcNow);
         var serialized = JsonSerializer.Serialize(payload);
         await File.WriteAllTextAsync(statusPath, serialized, cancellationToken);

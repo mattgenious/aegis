@@ -12,10 +12,16 @@ public sealed class CodexBackend : ISessionBackend
     private const string MessageLineSuffix = ".messages.jsonl";
     private const string StatusSuffix = ".status.json";
 
+    private readonly string? _stateRoot;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
     };
+
+    public CodexBackend(string? stateRoot = null)
+    {
+        _stateRoot = stateRoot;
+    }
 
     public BackendKind Kind => BackendKind.Codex;
 
@@ -239,22 +245,18 @@ public sealed class CodexBackend : ISessionBackend
         return CommandResult.Failure(1, "Session did not exist.");
     }
 
-    private static string ResolveSessionPath(string backendSessionId, string? baseDirectory)
+    private string ResolveSessionPath(string backendSessionId, string? baseDirectory)
     {
-        var root = Path.Combine(string.IsNullOrWhiteSpace(baseDirectory)
-            ? Path.GetTempPath()
-            : Path.GetFullPath(baseDirectory), ".harness-cli", "codex");
-        Directory.CreateDirectory(root);
-        return Path.Combine(root, backendSessionId);
+        return BackendStatePaths.ResolveSessionPath("codex", backendSessionId, baseDirectory, _stateRoot);
     }
 
-    private static string ResolveStatusPath(SessionRecord session)
+    private string ResolveStatusPath(SessionRecord session)
     {
         return (session.BackendMetadataPath
                 ?? ResolveSessionPath(session.BackendSessionId, session.Directory)) + StatusSuffix;
     }
 
-    private static string ResolveMessagesPath(SessionRecord session)
+    private string ResolveMessagesPath(SessionRecord session)
     {
         return (session.BackendMetadataPath
                 ?? ResolveSessionPath(session.BackendSessionId, session.Directory)) + MessageLineSuffix;
@@ -262,6 +264,7 @@ public sealed class CodexBackend : ISessionBackend
 
     private async Task PersistMessagesAsync(string messagesPath, List<CodexStoredMessage> messages, CancellationToken cancellationToken)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(messagesPath)!);
         List<CodexStoredMessage> existing = [];
         if (File.Exists(messagesPath))
         {
@@ -279,6 +282,7 @@ public sealed class CodexBackend : ISessionBackend
 
     private static async Task SaveStatusAsync(string statusPath, string status, CancellationToken cancellationToken)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(statusPath)!);
         var payload = new CodexStatus(status, DateTimeOffset.UtcNow);
         var serialized = JsonSerializer.Serialize(payload);
         await File.WriteAllTextAsync(statusPath, serialized, cancellationToken);
