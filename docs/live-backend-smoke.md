@@ -69,6 +69,7 @@ Result: `summary = "pi backend smoke passed"`.
 2026-05-23:
 
 - Published `HarnessCli.Core 0.1.0` and `HarnessCli.Backends 0.1.0` to GitHub Packages and validated Baton can restore/use the package-backed launcher path.
+- Published `HarnessCli.Core 0.1.1` and `HarnessCli.Backends 0.1.1` after moving Codex/Pi backend state outside target repositories.
 - Reverified live `ask` flows against OpenCode 1.15.10, Codex CLI 0.133.0-alpha.1, and Pi 0.75.4.
 - The WSL `opencode` command resolved to a Windows npm shim that could not run the Linux binary. The smoke used the current `opencode-linux-x64@1.15.10` package binary directly.
 - `ensure-server --print-logs` reached a healthy OpenCode 1.15.10 server but stayed attached to log streaming in this shell. The live OpenCode smoke used a directly started server while preserving the same HTTP `ask` path.

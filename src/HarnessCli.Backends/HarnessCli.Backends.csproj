@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>HarnessCli</RootNamespace>
     <PackageId>HarnessCli.Backends</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>mattgenious</Authors>
     <Description>Reusable OpenCode, Codex, and Pi backend adapters plus orchestration services for harness-cli.</Description>
     <RepositoryUrl>https://github.com/mattgenious/harness-cli</RepositoryUrl>
