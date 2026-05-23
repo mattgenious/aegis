@@ -2,13 +2,13 @@
 
 This project is an agent-facing CLI, so backend support is not considered verified by compilation alone. A backend smoke pass means `harness-cli ask` reached a live backend process, received an assistant response, and extracted a fresh `FINAL HANDOFF` summary.
 
-Last verified: 2026-05-22.
+Last verified: 2026-05-23.
 
 ## Source Of Truth Checked
 
-- OpenCode: `opencode --help`, `opencode serve --help`, `opencode models`, npm package metadata for `opencode-ai@1.15.7`.
-- Codex: local `codex exec --help` and current upstream `openai/codex` CLI source for exec flags.
-- Pi: local `pi --help` / `pi --mode json --help` and live JSON event output.
+- OpenCode: `opencode --help`, `opencode serve --help`, npm package metadata for `opencode-ai@1.15.10` and `opencode-linux-x64@1.15.10`.
+- Codex: local `codex exec --help`; smoke host reported `codex-cli 0.133.0-alpha.1`.
+- Pi: local `pi --help` / `pi --mode json --help`; smoke host reported `pi 0.75.4`.
 
 ## Verified Commands
 
@@ -18,15 +18,13 @@ The smoke run used an isolated registry:
 export HARNESS_CLI_SESSION_DIR=/tmp/harness-cli-live-smoke/sessions
 ```
 
-OpenCode 1.15.7:
+OpenCode 1.15.10:
 
 ```bash
-dotnet src/HarnessCli/bin/Debug/net10.0/opencode-harness-cli.dll ensure-server \
-  --hostname 0.0.0.0 \
-  --port 4096 \
-  --directory /tmp/harness-cli-live-smoke/repo \
-  --timeout 60 \
-  --print-logs
+# The WSL PATH had a Windows npm shim for opencode, so this run used the
+# current linux x64 package binary in /tmp/harness-cli-live-smoke/bin.
+PATH="/tmp/harness-cli-live-smoke/bin:$PATH" \
+  opencode serve --hostname 0.0.0.0 --port 4096 --print-logs --log-level DEBUG
 
 dotnet src/HarnessCli/bin/Debug/net10.0/opencode-harness-cli.dll ask \
   --server http://127.0.0.1:4096 \
@@ -67,6 +65,15 @@ pi backend smoke passed"
 Result: `summary = "pi backend smoke passed"`.
 
 ## Live Fixes From This Pass
+
+2026-05-23:
+
+- Published `HarnessCli.Core 0.1.0` and `HarnessCli.Backends 0.1.0` to GitHub Packages and validated Baton can restore/use the package-backed launcher path.
+- Reverified live `ask` flows against OpenCode 1.15.10, Codex CLI 0.133.0-alpha.1, and Pi 0.75.4.
+- The WSL `opencode` command resolved to a Windows npm shim that could not run the Linux binary. The smoke used the current `opencode-linux-x64@1.15.10` package binary directly.
+- `ensure-server --print-logs` reached a healthy OpenCode 1.15.10 server but stayed attached to log streaming in this shell. The live OpenCode smoke used a directly started server while preserving the same HTTP `ask` path.
+
+2026-05-22:
 
 - The CLI app now targets .NET 10, matching the available agent workstation runtime and the test projects.
 - Unix `ensure-server` now leaves OpenCode running with persistent inert stdin; OpenCode 1.15.7 exits shortly after stdin closes.
