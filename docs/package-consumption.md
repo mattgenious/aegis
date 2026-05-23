@@ -22,7 +22,7 @@ Reference from a consumer project:
 
 ```bash
 dotnet add package HarnessCli.Backends \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --source /absolute/path/to/harness-cli/artifacts/packages
 ```
 

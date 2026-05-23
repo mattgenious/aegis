@@ -55,8 +55,8 @@ public class CommandRulesTests
 
         Assert.Contains("<PackageId>HarnessCli.Core</PackageId>", coreProject);
         Assert.Contains("<PackageId>HarnessCli.Backends</PackageId>", backendProject);
-        Assert.Contains("<Version>0.1.0</Version>", coreProject);
-        Assert.Contains("<Version>0.1.0</Version>", backendProject);
+        Assert.Contains("<Version>0.1.1</Version>", coreProject);
+        Assert.Contains("<Version>0.1.1</Version>", backendProject);
         Assert.Contains("PackageCopyToOutput=\"true\"", coreProject);
         Assert.Contains("PackageCopyToOutput=\"true\"", backendProject);
     }
