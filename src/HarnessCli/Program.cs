@@ -320,11 +320,29 @@ internal static class Program
         var uri = new Uri(NormalizeServer(effectiveServer));
         var hostname = options.Hostname ?? (uri.Host is "localhost" ? "127.0.0.1" : uri.Host);
         var port = options.Port ?? uri.Port;
+        if (await CanConnectTcp(uri.Host, port, TimeSpan.FromSeconds(2)))
+        {
+            var health = await WaitForHealthyServer(healthClient, DateTimeOffset.UtcNow.AddSeconds(options.TimeoutSeconds));
+            if (health is not null)
+            {
+                WriteJson(new JsonObject
+                {
+                    ["status"] = "already-running",
+                    ["server"] = NormalizeServer(effectiveServer).TrimEnd('/'),
+                    ["health"] = health
+                });
+                return 0;
+            }
+
+            throw new TimeoutException($"Port {port} is already listening, but /global/health did not become healthy within {options.TimeoutSeconds}s. Stop that process or choose another port.");
+        }
+
         var logDir = options.LogDir ?? Path.Combine(Path.GetTempPath(), "opencode");
         Directory.CreateDirectory(logDir);
 
-        var stdout = Path.Combine(logDir, $"opencode-serve-{port}.out.log");
-        var stderr = Path.Combine(logDir, $"opencode-serve-{port}.err.log");
+        var logStamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff") + "-" + Guid.NewGuid().ToString("N");
+        var stdout = Path.Combine(logDir, $"opencode-serve-{port}-{logStamp}.out.log");
+        var stderr = Path.Combine(logDir, $"opencode-serve-{port}-{logStamp}.err.log");
         var processId = StartOpenCodeServer(options, hostname, port, stdout, stderr);
 
         using var startedClient = CreateHttpClient($"http://127.0.0.1:{port}");
@@ -360,7 +378,7 @@ internal static class Program
             {
             }
 
-            if (File.Exists(stdout) && (await File.ReadAllTextAsync(stdout)).Contains(listeningText, StringComparison.OrdinalIgnoreCase))
+            if (await FileContains(stdout, listeningText))
             {
                 WriteJson(new JsonObject
                 {
@@ -409,13 +427,14 @@ internal static class Program
                 "cd /d " + WindowsCmdQuote(workingDirectory),
                 "opencode " + string.Join(' ', arguments.Select(WindowsCmdQuote)) +
                 " 1>>" + WindowsCmdQuote(stdout) + " 2>>" + WindowsCmdQuote(stderr));
-            var launcher = Path.Combine(Path.GetDirectoryName(stdout)!, $"opencode-serve-{port}.cmd");
+            var launcher = Path.Combine(Path.GetDirectoryName(stdout)!, Path.GetFileNameWithoutExtension(stdout) + ".cmd");
             File.WriteAllText(launcher, command, Encoding.ASCII);
             var startInfo = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                UseShellExecute = false,
+                UseShellExecute = true,
                 CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
                 Arguments = $"/c start \"opencode-serve-{port}\" /min {WindowsCmdQuote(launcher)}"
             };
             using var starter = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start opencode.");
@@ -462,6 +481,82 @@ internal static class Program
     private static string PosixShellQuote(string value)
     {
         return "'" + value.Replace("'", "'\"'\"'") + "'";
+    }
+
+    private static async Task<bool> FileContains(string path, string text)
+    {
+        if (!File.Exists(path)) return false;
+
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var content = await reader.ReadToEndAsync();
+            return content.Contains(text, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static async Task<JsonObject?> WaitForHealthyServer(HttpClient healthClient, DateTimeOffset deadline)
+    {
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                var response = await healthClient.GetAsync("global/health", cts.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    return await response.Content.ReadFromJsonAsync<JsonObject>(JsonOptions, cts.Token);
+                }
+
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    throw new InvalidOperationException(
+                        $"An OpenCode server is already listening at {healthClient.BaseAddress?.GetLeftPart(UriPartial.Authority) ?? "the target server"} but requires auth. " +
+                        "Stop that server or choose another port; ensure-server only removes auth when it starts the child process itself.");
+                }
+            }
+            catch (HttpRequestException)
+            {
+            }
+            catch (TaskCanceledException)
+            {
+            }
+
+            await Task.Delay(500);
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> CanConnectTcp(string host, int port, TimeSpan timeout)
+    {
+        try
+        {
+            using var client = new System.Net.Sockets.TcpClient();
+            var connectTask = client.ConnectAsync(host, port);
+            var completed = await Task.WhenAny(connectTask, Task.Delay(timeout));
+            if (completed != connectTask) return false;
+
+            await connectTask;
+            return client.Connected;
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     private static async Task PumpToFile(StreamReader reader, string path)
