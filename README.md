@@ -134,7 +134,7 @@ harness-cli work-map create --title "Ship search fixes" --intent "Coordinate ind
 harness-cli work-map stream add --mission mission-... --name "API slice" --role implementer --clone E:\agents\workspaces\api-search-fix
 harness-cli work-map launch --mission mission-... --backend codex --prompt-file worker-context.md
 harness-cli work-map show --mission mission-... --format html --output work-map.html
-harness-cli work-map serve --host 127.0.0.1 --port 4896
+harness-cli work-map serve --host 127.0.0.1 --port 4896 --access-log .\work-map-access.jsonl
 ```
 
 Keep the map current as workers report back:
@@ -150,7 +150,16 @@ harness-cli work-map session blocker set --session codex-... --summary "Cannot r
 harness-cli work-map session verify --session codex-... --kind parent-review --result pass --summary "Diff and tests checked by coordinator."
 ```
 
-The HTML output is a static optional observer over the same JSON records. It is not required for harness-cli execution and does not need a server. `work-map serve` starts an optional read-only React observer UI over those records with polling; use `--host 0.0.0.0` when viewing from a phone on the same trusted network or over Tailscale.
+The HTML output is a static optional observer over the same JSON records. It is not required for harness-cli execution and does not need a server. `work-map serve` starts an optional read-only React observer UI over those records with polling, writes request lines to stderr, and can append durable JSONL access records with `--access-log FILE`.
+
+For Tailscale Serve without changing firewall rules, keep the observer bound to loopback and proxy it through Tailscale:
+
+```powershell
+harness-cli work-map serve --host 127.0.0.1 --port 4896 --access-log .\work-map-access.jsonl
+tailscale serve --bg http://127.0.0.1:4896/
+```
+
+Use `--host 0.0.0.0` only when you intentionally want direct access from another device on the same trusted network or Tailscale IP.
 
 Work-map records use record-level locked mutations and atomic file replacement so multiple worker processes can add streams, sessions, and evidence to the same mission without clobbering each other. Session records store bounded provider-neutral message excerpts and status observations for continuation and optional observer UIs.
 

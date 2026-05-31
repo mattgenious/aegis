@@ -1947,7 +1947,7 @@ Usage:
   harness-cli work-map brief --mission ID --stream ID [--output FILE]
   harness-cli work-map launch --mission ID [--dry-run] [--force] [--include-complete] [--wait]
   harness-cli work-map supervise --mission ID [--launch-missing] [--until-idle] [--max-runs N]
-  harness-cli work-map serve [--host HOST] [--port PORT]
+  harness-cli work-map serve [--host HOST] [--port PORT] [--access-log FILE]
   harness-cli work-map store info
   harness-cli work-map store export [--output FILE]
   harness-cli work-map store import --file FILE [--force]
@@ -1972,8 +1972,11 @@ Notes:
   launch fans out from an existing map and uses Codex by default unless --backend overrides it.
   supervise syncs mission sessions and reports quiet, active, blocked, and handoff counts.
   store export/import writes portable JSON snapshots; the runtime store remains a JSON directory.
-  serve starts an optional read-only React observer UI over the same records. Use --host 0.0.0.0
-  when viewing from another device on the same trusted network or over Tailscale.
+  serve starts an optional read-only React observer UI over the same records and logs each
+  request to stderr. Pass --access-log FILE to append durable JSONL access records.
+  For Tailscale Serve without firewall changes, keep the default loopback bind and run
+  `tailscale serve --bg http://127.0.0.1:4896/`. Use --host 0.0.0.0 only for direct
+  access from another device on the same trusted network or Tailscale IP.
   The records describe missions, workstreams, clones, sessions, evidence, handoffs, blockers,
   and verification observations. They are not a workflow engine.
   Use clone/clone-path language for isolated agent work; this command does not create git worktrees.
