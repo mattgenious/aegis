@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -136,14 +139,76 @@ public class IntegrationSmokeTests
         }
     }
 
+    [Fact]
+    public async Task WorkMapServeWritesJsonlAccessLog()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var accessLog = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "access.jsonl");
+        var port = GetFreeTcpPort();
+        Process? process = null;
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            process = StartCliProcess(
+                workMapStore,
+                "work-map",
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                port.ToString(),
+                "--access-log",
+                accessLog);
+
+            await WaitForObserver(port, process);
+
+            using var http = new HttpClient();
+            http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("HarnessCliTest", "1.0"));
+            using var response = await http.GetAsync($"http://127.0.0.1:{port}/api/health");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var entry = await WaitForAccessLogEntry(accessLog, "/api/health", "HarnessCliTest/1.0");
+
+            Assert.Equal("GET", entry["method"]!.GetValue<string>());
+            Assert.Equal("/api/health", entry["path"]!.GetValue<string>());
+            Assert.Equal(200, entry["statusCode"]!.GetValue<int>());
+            Assert.Equal("HarnessCliTest/1.0", entry["userAgent"]!.GetValue<string>());
+        }
+        finally
+        {
+            if (process is not null)
+            {
+                await StopProcess(process);
+            }
+
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            var accessLogDirectory = Path.GetDirectoryName(accessLog);
+            if (accessLogDirectory is not null && Directory.Exists(accessLogDirectory))
+            {
+                Directory.Delete(accessLogDirectory, true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task WorkMapHelpDocumentsAccessLogAndTailscaleServe()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var help = await RunCli(workMapStore, "help", "work-map");
+
+            Assert.Contains("--access-log FILE", help.Stdout);
+            Assert.Contains("tailscale serve --bg http://127.0.0.1:4896/", help.Stdout);
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+        }
+    }
+
     private static async Task<CliResult> RunCli(string workMapStore, params string[] args)
     {
-        var cliPath = Path.Combine(AppContext.BaseDirectory, "harness-cli.dll");
-        if (!File.Exists(cliPath))
-        {
-            cliPath = Path.Combine(LocateRepoRoot(Directory.GetCurrentDirectory()), "src", "HarnessCli", "bin", "Debug", "net10.0", "harness-cli.dll");
-        }
-
         var startInfo = new ProcessStartInfo
         {
             FileName = "dotnet",
@@ -152,7 +217,7 @@ public class IntegrationSmokeTests
             RedirectStandardError = true,
             UseShellExecute = false
         };
-        startInfo.ArgumentList.Add(cliPath);
+        startInfo.ArgumentList.Add(LocateCliPath());
         foreach (var arg in args)
         {
             startInfo.ArgumentList.Add(arg);
@@ -180,6 +245,138 @@ public class IntegrationSmokeTests
         var result = new CliResult(process.ExitCode, await stdout, await stderr);
         Assert.True(result.ExitCode == 0, $"harness-cli failed with exit {result.ExitCode}.\nSTDOUT:\n{result.Stdout}\nSTDERR:\n{result.Stderr}");
         return result;
+    }
+
+    private static Process StartCliProcess(string workMapStore, params string[] args)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add(LocateCliPath());
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        startInfo.Environment["HARNESS_CLI_WORK_MAP_DIR"] = workMapStore;
+        startInfo.Environment["HARNESS_CLI_SESSION_DIR"] = Path.Combine(workMapStore, "sessions");
+        startInfo.Environment["HARNESS_CLI_BACKEND_STATE_DIR"] = Path.Combine(workMapStore, "backend-state");
+
+        var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start harness-cli test process.");
+        process.StandardInput.Close();
+        return process;
+    }
+
+    private static async Task WaitForObserver(int port, Process process)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+        Exception? lastException = null;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (process.HasExited)
+            {
+                var stdout = await process.StandardOutput.ReadToEndAsync();
+                var stderr = await process.StandardError.ReadToEndAsync();
+                throw new InvalidOperationException($"work-map serve exited early with {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+            }
+
+            try
+            {
+                using var response = await http.GetAsync($"http://127.0.0.1:{port}/api/health");
+                if (response.IsSuccessStatusCode)
+                {
+                    return;
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                lastException = ex;
+            }
+
+            await Task.Delay(200);
+        }
+
+        throw new TimeoutException($"Timed out waiting for work-map serve on port {port}: {lastException?.Message}");
+    }
+
+    private static async Task<JsonNode> WaitForAccessLogEntry(string accessLog, string path, string? userAgent = null)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            try
+            {
+                if (File.Exists(accessLog))
+                {
+                    foreach (var line in await File.ReadAllLinesAsync(accessLog))
+                    {
+                        if (string.IsNullOrWhiteSpace(line))
+                        {
+                            continue;
+                        }
+
+                        var node = JsonNode.Parse(line);
+                        if (node is not null
+                            && string.Equals(node["path"]?.GetValue<string>(), path, StringComparison.Ordinal)
+                            && (userAgent is null
+                                || string.Equals(node["userAgent"]?.GetValue<string>(), userAgent, StringComparison.Ordinal)))
+                        {
+                            return node;
+                        }
+                    }
+                }
+            }
+            catch (IOException)
+            {
+            }
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException($"Timed out waiting for access log entry for {path} in {accessLog}.");
+    }
+
+    private static async Task StopProcess(Process process)
+    {
+        if (!process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+        }
+
+        process.Dispose();
+    }
+
+    private static int GetFreeTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private static string LocateCliPath()
+    {
+        var cliPath = Path.Combine(AppContext.BaseDirectory, "harness-cli.dll");
+        if (!File.Exists(cliPath))
+        {
+            cliPath = Path.Combine(LocateRepoRoot(Directory.GetCurrentDirectory()), "src", "HarnessCli", "bin", "Debug", "net10.0", "harness-cli.dll");
+        }
+
+        return cliPath;
     }
 
     private static string WorkspaceKey(string workspaceDirectory)
