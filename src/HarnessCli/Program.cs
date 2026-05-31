@@ -11,7 +11,7 @@ using HarnessCli.Infrastructure;
 
 namespace OpencodeHarnessCli;
 
-internal static class Program
+internal static partial class Program
 {
     private const string DefaultServer = "http://127.0.0.1:4096";
 
@@ -71,6 +71,11 @@ internal static class Program
         try
         {
             var command = args[0];
+            if (command == "work-map")
+            {
+                return await RunWorkMapCommand(args.Skip(1).ToArray());
+            }
+
             if (args.Skip(1).Any(IsHelpFlag))
             {
                 return PrintCommandHelp(command);
@@ -1769,11 +1774,12 @@ internal static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-opencode-harness-cli - deterministic helper for OpenCode pseudo-subagents
+opencode-harness-cli - deterministic helper for delegated agent sessions
 
 Goal:
-  Start cheap/fast delegated OpenCode sessions, force a final handoff summary,
-  then fetch only that summary instead of loading the whole session.
+  Start delegated backend sessions, force a final handoff summary, fetch only
+  that summary when needed, and keep lightweight work-map records for complex
+  multi-agent coordination.
 
 Golden path:
   opencode-harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
@@ -1805,6 +1811,10 @@ Usage:
   opencode-harness-cli watch --session ses_... [--interval-minutes 60] [--until-idle]
   opencode-harness-cli watch-many --session ses_... --session ses_... [--until-idle]
   opencode-harness-cli export --session ses_... [--format json|md] [--output FILE]
+  opencode-harness-cli work-map create --title TITLE [--intent TEXT]
+  opencode-harness-cli work-map stream add --mission ID --name NAME [--clone PATH]
+  opencode-harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md
+  opencode-harness-cli work-map show --mission ID --format json|md|html
 
 Model examples:
   --model github-copilot/gpt-5.4-mini        Fast delegated work; prefer this for most pseudo-subagents.
@@ -1912,11 +1922,35 @@ Run note:
             case "watch-many": PrintWatchManyHelp(); return 0;
             case "tail": PrintTailHelp(); return 0;
             case "export": PrintExportHelp(); return 0;
+            case "work-map": PrintWorkMapHelp(); return 0;
             default:
                 Console.Error.WriteLine($"Unknown command '{command}'. Run `opencode-harness-cli --help` for the command list.");
                 return 1;
         }
     }
+
+    private static void PrintWorkMapHelp() => Console.WriteLine("""
+work-map - keep a lightweight mission graph for delegated agent work.
+
+Usage:
+  opencode-harness-cli work-map create --title TITLE [--intent TEXT] [--next-action TEXT]
+  opencode-harness-cli work-map list [--format json|md]
+  opencode-harness-cli work-map show --mission ID [--format json|md|html] [--output FILE]
+  opencode-harness-cli work-map brief --mission ID --stream ID [--output FILE]
+  opencode-harness-cli work-map stream add --mission ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
+  opencode-harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex] [--role TEXT]
+  opencode-harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex]
+  opencode-harness-cli work-map session sync --session ID
+  opencode-harness-cli work-map evidence add --mission ID [--stream ID] [--session ID] --summary TEXT
+
+Notes:
+  Work-map records are stored outside target repos by default under HARNESS_CLI_WORK_MAP_DIR
+  or the platform app-data harness-cli/work-map directory.
+  The records describe missions, workstreams, clones, sessions, evidence, handoffs, blockers,
+  and verification observations. They are not a workflow engine.
+  Use clone/clone-path language for isolated agent work; this command does not create git worktrees.
+  The html format is a static optional observer view over the same records.
+""");
 
     private static void PrintHealthHelp() => Console.WriteLine("""
 health - check whether the OpenCode HTTP server is reachable.
