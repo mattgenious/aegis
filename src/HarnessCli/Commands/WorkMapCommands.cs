@@ -2095,6 +2095,8 @@ internal static partial class Program
 
         public string? Path { get; private set; }
 
+        public string? AccessLogPath { get; private set; }
+
         public string? Summary { get; private set; }
 
         public string? File { get; private set; }
@@ -2189,6 +2191,7 @@ internal static partial class Program
                     case "--next-action": parsed.NextAction = Value(queue, arg); break;
                     case "--kind": parsed.Kind = Value(queue, arg); break;
                     case "--path": parsed.Path = Value(queue, arg); break;
+                    case "--access-log": parsed.AccessLogPath = Value(queue, arg); break;
                     case "--summary": parsed.Summary = Value(queue, arg); break;
                     case "--file": parsed.File = Value(queue, arg); break;
                     case "--input": parsed.File = Value(queue, arg); break;
