@@ -19,7 +19,7 @@ public class CommandRulesTests
     {
         var directory = LocateRepoRoot(Directory.GetCurrentDirectory());
         var coreProject = Path.Combine(directory, "src", "HarnessCli.Core", "HarnessCli.Core.csproj");
-        var cliProject = Path.Combine(directory, "src", "HarnessCli", "OpencodeHarnessCli.csproj");
+        var cliProject = Path.Combine(directory, "src", "HarnessCli", "HarnessCli.csproj");
         var cliProjectText = File.ReadAllText(cliProject);
 
         Assert.True(File.Exists(coreProject), "HarnessCli.Core must exist as a reusable library project.");
@@ -35,7 +35,7 @@ public class CommandRulesTests
     {
         var directory = LocateRepoRoot(Directory.GetCurrentDirectory());
         var backendProject = Path.Combine(directory, "src", "HarnessCli.Backends", "HarnessCli.Backends.csproj");
-        var cliProject = Path.Combine(directory, "src", "HarnessCli", "OpencodeHarnessCli.csproj");
+        var cliProject = Path.Combine(directory, "src", "HarnessCli", "HarnessCli.csproj");
         var cliProjectText = File.ReadAllText(cliProject);
 
         Assert.True(File.Exists(backendProject), "HarnessCli.Backends must exist as a reusable backend adapter project.");
@@ -44,6 +44,23 @@ public class CommandRulesTests
         Assert.True(File.Exists(Path.Combine(directory, "src", "HarnessCli.Backends", "Backends", "OpenCodeBackend.cs")));
         Assert.True(File.Exists(Path.Combine(directory, "src", "HarnessCli.Backends", "Backends", "PiBackend.cs")));
         Assert.False(Directory.Exists(Path.Combine(directory, "src", "HarnessCli", "Backends")));
+    }
+
+    [Fact]
+    public void CliProjectUsesBackendAgnosticCommandName()
+    {
+        var directory = LocateRepoRoot(Directory.GetCurrentDirectory());
+        var cliProjectPath = Path.Combine(directory, "src", "HarnessCli", "HarnessCli.csproj");
+        var legacyProjectPath = Path.Combine(directory, "src", "HarnessCli", "OpencodeHarnessCli.csproj");
+        var cliProject = File.ReadAllText(cliProjectPath);
+        var solution = File.ReadAllText(Path.Combine(directory, "harness-cli.sln"));
+
+        Assert.True(File.Exists(cliProjectPath), "CLI app project should use the backend-agnostic HarnessCli name.");
+        Assert.False(File.Exists(legacyProjectPath), "The old OpenCode-specific project name should not be restored.");
+        Assert.Contains("<AssemblyName>harness-cli</AssemblyName>", cliProject);
+        Assert.Contains("opencode-harness-cli.cmd", cliProject);
+        Assert.Contains("src\\HarnessCli\\HarnessCli.csproj", solution);
+        Assert.DoesNotContain("OpencodeHarnessCli", solution);
     }
 
     [Fact]

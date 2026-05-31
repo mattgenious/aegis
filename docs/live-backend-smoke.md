@@ -18,6 +18,8 @@ The smoke run used an isolated registry:
 export HARNESS_CLI_SESSION_DIR=/tmp/harness-cli-live-smoke/sessions
 ```
 
+Use `harness-cli` or `harness-cli.dll` for live smoke commands. The legacy `opencode-harness-cli` name is only a command-shim compatibility alias; direct `dotnet .../opencode-harness-cli.dll` invocation is not part of the migration contract.
+
 OpenCode 1.15.10:
 
 ```bash
@@ -26,7 +28,7 @@ OpenCode 1.15.10:
 PATH="/tmp/harness-cli-live-smoke/bin:$PATH" \
   opencode serve --hostname 0.0.0.0 --port 4096 --print-logs --log-level DEBUG
 
-dotnet src/HarnessCli/bin/Debug/net10.0/opencode-harness-cli.dll ask \
+dotnet src/HarnessCli/bin/Debug/net10.0/harness-cli.dll ask \
   --server http://127.0.0.1:4096 \
   --directory /tmp/harness-cli-live-smoke/repo \
   --timeout 240 \
@@ -41,7 +43,7 @@ Result: `summary = "opencode backend smoke passed"`.
 Codex:
 
 ```bash
-dotnet src/HarnessCli/bin/Debug/net10.0/opencode-harness-cli.dll ask \
+dotnet src/HarnessCli/bin/Debug/net10.0/harness-cli.dll ask \
   --backend codex \
   --directory /tmp/harness-cli-live-smoke/repo \
   --timeout 180 \
@@ -54,7 +56,7 @@ Result: `summary = "codex backend smoke passed"`.
 Pi:
 
 ```bash
-dotnet src/HarnessCli/bin/Debug/net10.0/opencode-harness-cli.dll ask \
+dotnet src/HarnessCli/bin/Debug/net10.0/harness-cli.dll ask \
   --backend pi \
   --directory /tmp/harness-cli-live-smoke/repo \
   --timeout 240 \

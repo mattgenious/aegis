@@ -10,7 +10,7 @@
 - `docs/` contains product and architecture docs.
 - `prompts/` contains built-in agent prompt templates as markdown, grouped by theme/backend.
 
-The app binary remains `opencode-harness-cli` for compatibility.
+The app binary is `harness-cli`. Keep `opencode-harness-cli` only as an explicit migration alias until compatibility support is intentionally removed.
 
 ## Source organization
 
