@@ -127,13 +127,14 @@ harness-cli latest --search "Ship:" --all --limit 20
 
 Use `work-map` when a coordinator needs durable state for a mission graph: workstreams, roles, clones, sessions, evidence, final handoffs, blockers, and integration notes. Records are stored outside target repos by default under `HARNESS_CLI_WORK_MAP_DIR`, or the platform app-data `harness-cli/work-map` directory when the variable is unset.
 
-Create a mission, attach a clone-backed workstream, run or link a session, and render an optional observer view:
+Create a mission, attach clone-backed workstreams, fan out worker sessions, and render an optional observer view:
 
 ```powershell
 harness-cli work-map create --title "Ship search fixes" --intent "Coordinate independent repo slices"
 harness-cli work-map stream add --mission mission-... --name "API slice" --role implementer --clone E:\agents\workspaces\api-search-fix
-harness-cli work-map session run --mission mission-... --stream stream-... --backend codex --directory E:\agents\workspaces\api-search-fix --prompt-file task.md
+harness-cli work-map launch --mission mission-... --backend codex --prompt-file worker-context.md
 harness-cli work-map show --mission mission-... --format html --output work-map.html
+harness-cli work-map serve --host 127.0.0.1 --port 4896
 ```
 
 Keep the map current as workers report back:
@@ -141,13 +142,15 @@ Keep the map current as workers report back:
 ```powershell
 harness-cli work-map mission update --mission mission-... --status in-progress --next-action "Review worker handoffs"
 harness-cli work-map stream update --mission mission-... --stream stream-... --status needs-review --integration-action "Cherry-pick patch and run tests"
+harness-cli work-map supervise --mission mission-... --launch-missing --max-runs 1
 harness-cli work-map session sync --mission mission-... --all
+harness-cli work-map store export --output work-map-snapshot.json
 harness-cli work-map session handoff --session codex-... --summary "Patch is ready; tests passed."
 harness-cli work-map session blocker set --session codex-... --summary "Cannot run tests: SDK missing" --evidence "dotnet test failed before restore"
 harness-cli work-map session verify --session codex-... --kind parent-review --result pass --summary "Diff and tests checked by coordinator."
 ```
 
-The HTML output is a static optional observer over the same JSON records. It is not required for harness-cli execution and does not need a server.
+The HTML output is a static optional observer over the same JSON records. It is not required for harness-cli execution and does not need a server. `work-map serve` starts an optional read-only React observer UI over those records with polling; use `--host 0.0.0.0` when viewing from a phone on the same trusted network or over Tailscale.
 
 Work-map records use record-level locked mutations and atomic file replacement so multiple worker processes can add streams, sessions, and evidence to the same mission without clobbering each other. Session records store bounded provider-neutral message excerpts and status observations for continuation and optional observer UIs.
 
