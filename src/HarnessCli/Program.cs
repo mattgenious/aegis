@@ -9,7 +9,7 @@ using HarnessCli.Backends;
 using HarnessCli.Core;
 using HarnessCli.Infrastructure;
 
-namespace OpencodeHarnessCli;
+namespace HarnessCli;
 
 internal static partial class Program
 {
@@ -1774,7 +1774,7 @@ internal static partial class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-opencode-harness-cli - deterministic helper for delegated agent sessions
+harness-cli - deterministic helper for delegated agent sessions
 
 Goal:
   Start delegated backend sessions, force a final handoff summary, fetch only
@@ -1782,39 +1782,43 @@ Goal:
   multi-agent coordination.
 
 Golden path:
-  opencode-harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
-  opencode-harness-cli ask --timeout 900 --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
-  opencode-harness-cli last-summary --session ses_... --plain
+  harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
+  harness-cli ask --timeout 900 --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
+  harness-cli last-summary --session ses_... --plain
 
 Command help:
-  opencode-harness-cli help watch
-  opencode-harness-cli watch --help
-  opencode-harness-cli watch -h
+  harness-cli help watch
+  harness-cli watch --help
+  harness-cli watch -h
+
+Compatibility:
+  opencode-harness-cli is a migration alias for the same command when installed
+  by the workspace plugin or emitted by dotnet publish.
 
 Usage:
-  opencode-harness-cli ensure-server [--server http://127.0.0.1:4096] [--hostname 0.0.0.0] [--port 4096]
-  opencode-harness-cli health [--server URL]
-  opencode-harness-cli self-test
-  opencode-harness-cli new --title TITLE [--parent ses_...]
-  opencode-harness-cli spawn --target TARGET [--target TARGET...] [--model provider/model] [--directory PATH]
-  opencode-harness-cli latest [--search TEXT] [--limit 20]
-  opencode-harness-cli ask --prompt TEXT [--profile fast|cheap|deep] [--model provider/model] [--variant low] [--agent build] [--title TITLE]
-  opencode-harness-cli ask --prompt-file task.md --timeout 600 --model github-copilot/gpt-5.4-mini
-  opencode-harness-cli ask --prompt-file task.md --async --model github-copilot/gpt-5.4-mini
-  opencode-harness-cli status [--session ses_...]
-  opencode-harness-cli wait --session ses_...
-  opencode-harness-cli last-summary --session ses_... [--plain]
-  opencode-harness-cli messages --session ses_... [--limit 20]
-  opencode-harness-cli tail --session ses_... [--limit 20] [--interval-seconds 5] [--once]
-  opencode-harness-cli events [--limit 10] [--timeout 30]
-  opencode-harness-cli abort --session ses_...
-  opencode-harness-cli watch --session ses_... [--interval-minutes 60] [--until-idle]
-  opencode-harness-cli watch-many --session ses_... --session ses_... [--until-idle]
-  opencode-harness-cli export --session ses_... [--format json|md] [--output FILE]
-  opencode-harness-cli work-map create --title TITLE [--intent TEXT]
-  opencode-harness-cli work-map stream add --mission ID --name NAME [--clone PATH]
-  opencode-harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md
-  opencode-harness-cli work-map show --mission ID --format json|md|html
+  harness-cli ensure-server [--server http://127.0.0.1:4096] [--hostname 0.0.0.0] [--port 4096]
+  harness-cli health [--server URL]
+  harness-cli self-test
+  harness-cli new --title TITLE [--parent ses_...]
+  harness-cli spawn --target TARGET [--target TARGET...] [--model provider/model] [--directory PATH]
+  harness-cli latest [--search TEXT] [--limit 20]
+  harness-cli ask --prompt TEXT [--profile fast|cheap|deep] [--model provider/model] [--variant low] [--agent build] [--title TITLE]
+  harness-cli ask --prompt-file task.md --timeout 600 --model github-copilot/gpt-5.4-mini
+  harness-cli ask --prompt-file task.md --async --model github-copilot/gpt-5.4-mini
+  harness-cli status [--session ses_...]
+  harness-cli wait --session ses_...
+  harness-cli last-summary --session ses_... [--plain]
+  harness-cli messages --session ses_... [--limit 20]
+  harness-cli tail --session ses_... [--limit 20] [--interval-seconds 5] [--once]
+  harness-cli events [--limit 10] [--timeout 30]
+  harness-cli abort --session ses_...
+  harness-cli watch --session ses_... [--interval-minutes 60] [--until-idle]
+  harness-cli watch-many --session ses_... --session ses_... [--until-idle]
+  harness-cli export --session ses_... [--format json|md] [--output FILE]
+  harness-cli work-map create --title TITLE [--intent TEXT]
+  harness-cli work-map stream add --mission ID --name NAME [--clone PATH]
+  harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md
+  harness-cli work-map show --mission ID --format json|md|html
 
 Model examples:
   --model github-copilot/gpt-5.4-mini        Fast delegated work; prefer this for most pseudo-subagents.
@@ -1924,7 +1928,7 @@ Run note:
             case "export": PrintExportHelp(); return 0;
             case "work-map": PrintWorkMapHelp(); return 0;
             default:
-                Console.Error.WriteLine($"Unknown command '{command}'. Run `opencode-harness-cli --help` for the command list.");
+                Console.Error.WriteLine($"Unknown command '{command}'. Run `harness-cli --help` for the command list.");
                 return 1;
         }
     }
@@ -1933,15 +1937,15 @@ Run note:
 work-map - keep a lightweight mission graph for delegated agent work.
 
 Usage:
-  opencode-harness-cli work-map create --title TITLE [--intent TEXT] [--next-action TEXT]
-  opencode-harness-cli work-map list [--format json|md]
-  opencode-harness-cli work-map show --mission ID [--format json|md|html] [--output FILE]
-  opencode-harness-cli work-map brief --mission ID --stream ID [--output FILE]
-  opencode-harness-cli work-map stream add --mission ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
-  opencode-harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex] [--role TEXT]
-  opencode-harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex]
-  opencode-harness-cli work-map session sync --session ID
-  opencode-harness-cli work-map evidence add --mission ID [--stream ID] [--session ID] --summary TEXT
+  harness-cli work-map create --title TITLE [--intent TEXT] [--next-action TEXT]
+  harness-cli work-map list [--format json|md]
+  harness-cli work-map show --mission ID [--format json|md|html] [--output FILE]
+  harness-cli work-map brief --mission ID --stream ID [--output FILE]
+  harness-cli work-map stream add --mission ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
+  harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex] [--role TEXT]
+  harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex]
+  harness-cli work-map session sync --session ID
+  harness-cli work-map evidence add --mission ID [--stream ID] [--session ID] --summary TEXT
 
 Notes:
   Work-map records are stored outside target repos by default under HARNESS_CLI_WORK_MAP_DIR
@@ -1956,21 +1960,21 @@ Notes:
 health - check whether the OpenCode HTTP server is reachable.
 
 Usage:
-  opencode-harness-cli health [--server URL]
+  harness-cli health [--server URL]
 
 Options:
   --server URL  OpenCode server URL. Default: http://127.0.0.1:4096
 
 Examples:
-  opencode-harness-cli health
-  opencode-harness-cli health --server http://127.0.0.1:4096
+  harness-cli health
+  harness-cli health --server http://127.0.0.1:4096
 """);
 
     private static void PrintEnsureServerHelp() => Console.WriteLine("""
 ensure-server - start or reuse a local unauthenticated OpenCode server.
 
 Usage:
-  opencode-harness-cli ensure-server [--server URL] [--hostname HOST] [--port N] [--directory PATH] [--timeout SECONDS] [--print-logs] [--log-dir PATH] [--log-level LEVEL]
+  harness-cli ensure-server [--server URL] [--hostname HOST] [--port N] [--directory PATH] [--timeout SECONDS] [--print-logs] [--log-dir PATH] [--log-level LEVEL]
 
 Options:
   --server URL       Server URL to check first. Default: http://127.0.0.1:4096
@@ -1986,22 +1990,22 @@ Notes:
   Removes OPENCODE_SERVER_USERNAME and OPENCODE_SERVER_PASSWORD from the child server process so inherited Basic auth settings do not break local automation.
 
 Examples:
-  opencode-harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
-  opencode-harness-cli ensure-server --directory E:\ --timeout 60
+  harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
+  harness-cli ensure-server --directory E:\ --timeout 60
 """);
 
     private static void PrintSelfTestHelp() => Console.WriteLine("""
 self-test - run local parser tests without contacting OpenCode.
 
 Usage:
-  opencode-harness-cli self-test
+  harness-cli self-test
 """);
 
     private static void PrintNewHelp() => Console.WriteLine("""
 new - create a new OpenCode session.
 
 Usage:
-  opencode-harness-cli new --title TITLE [--parent ses_...] [--directory PATH] [--server URL]
+  harness-cli new --title TITLE [--parent ses_...] [--directory PATH] [--server URL]
 
 Options:
   --title TITLE     Session title.
@@ -2009,15 +2013,15 @@ Options:
   --directory PATH  Project directory associated with the session.
 
 Examples:
-  opencode-harness-cli new --title "scratch"
-  opencode-harness-cli new --title "Ship: issue #5" --directory E:\work\baton
+  harness-cli new --title "scratch"
+  harness-cli new --title "Ship: issue #5" --directory E:\work\baton
 """);
 
     private static void PrintLatestHelp() => Console.WriteLine("""
 latest - find recent sessions, optionally by title/search text.
 
 Usage:
-  opencode-harness-cli latest [--search TEXT] [--limit N] [--all] [--server URL]
+  harness-cli latest [--search TEXT] [--limit N] [--all] [--server URL]
 
 Options:
   --search TEXT  Filter sessions by search text.
@@ -2025,15 +2029,15 @@ Options:
   --all          Print all returned sessions instead of only the first.
 
 Examples:
-  opencode-harness-cli latest --search "Ship:"
-  opencode-harness-cli latest --search "Ship:" --all --limit 20
+  harness-cli latest --search "Ship:"
+  harness-cli latest --search "Ship:" --all --limit 20
 """);
 
     private static void PrintAskHelp() => Console.WriteLine("""
 ask - send a task prompt to a new or existing OpenCode session.
 
 Usage:
-  opencode-harness-cli ask (--prompt TEXT | --prompt-file FILE | stdin) [options]
+  harness-cli ask (--prompt TEXT | --prompt-file FILE | stdin) [options]
 
 Options:
   --session ses_...       Existing session. If omitted, a new session is created.
@@ -2055,17 +2059,17 @@ Options:
   --directory PATH        Project directory associated with the request.
 
 Examples:
-  opencode-harness-cli ask --profile fast --prompt-file task.md
-  opencode-harness-cli ask --prompt-file task.md --timeout 900 --model github-copilot/gpt-5.5
-  opencode-harness-cli ask --async --prompt-file task.md --model github-copilot/gpt-5.4-mini --variant low
-  opencode-harness-cli ask --session ses_... --no-reply --prompt "Context only."
+  harness-cli ask --profile fast --prompt-file task.md
+  harness-cli ask --prompt-file task.md --timeout 900 --model github-copilot/gpt-5.5
+  harness-cli ask --async --prompt-file task.md --model github-copilot/gpt-5.4-mini --variant low
+  harness-cli ask --session ses_... --no-reply --prompt "Context only."
 """);
 
     private static void PrintSpawnHelp() => Console.WriteLine("""
 spawn - launch one delegated worker session per target.
 
 Usage:
-  opencode-harness-cli spawn --target TARGET [--target TARGET...] [options]
+  harness-cli spawn --target TARGET [--target TARGET...] [options]
 
 Options:
   --target TEXT              Target to launch. Repeat for multiple sessions.
@@ -2079,40 +2083,40 @@ Options:
   --timeout SECONDS          Wait timeout when --wait is set. Default: 300.
 
 Examples:
-  opencode-harness-cli spawn --target "issue #5" --target "issue #4" --directory E:\work\baton --model github-copilot/gpt-5.5
-  opencode-harness-cli spawn --target "issue #5" --resume-session "issue #5=ses_..."
+  harness-cli spawn --target "issue #5" --target "issue #4" --directory E:\work\baton --model github-copilot/gpt-5.5
+  harness-cli spawn --target "issue #5" --resume-session "issue #5=ses_..."
 """);
 
     private static void PrintStatusHelp() => Console.WriteLine("""
 status - show current OpenCode session activity state.
 
 Usage:
-  opencode-harness-cli status [--session ses_...] [--server URL]
+  harness-cli status [--session ses_...] [--server URL]
 
 Examples:
-  opencode-harness-cli status
-  opencode-harness-cli status --session ses_...
+  harness-cli status
+  harness-cli status --session ses_...
 """);
 
     private static void PrintMessagesHelp() => Console.WriteLine("""
 messages - print recent session messages as raw JSON.
 
 Usage:
-  opencode-harness-cli messages --session ses_... [--limit N] [--directory PATH]
+  harness-cli messages --session ses_... [--limit N] [--directory PATH]
 
 Options:
   --session ses_...  Required session id.
   --limit N          Maximum messages. Default: 20.
 
 Example:
-  opencode-harness-cli messages --session ses_... --limit 20
+  harness-cli messages --session ses_... --limit 20
 """);
 
     private static void PrintLastSummaryHelp() => Console.WriteLine("""
 last-summary - extract the fresh assistant final handoff after the latest user prompt.
 
 Usage:
-  opencode-harness-cli last-summary --session ses_... [--summary-marker TEXT] [--plain]
+  harness-cli last-summary --session ses_... [--summary-marker TEXT] [--plain]
 
 Options:
   --session ses_...      Required session id.
@@ -2123,14 +2127,14 @@ Freshness:
   Historical handoffs before the latest user prompt are ignored. If the latest prompt has no fresh final handoff yet, this command exits non-zero and says so instead of returning a stale summary.
 
 Example:
-  opencode-harness-cli last-summary --session ses_... --plain
+  harness-cli last-summary --session ses_... --plain
 """);
 
     private static void PrintWaitHelp() => Console.WriteLine("""
 wait - passively wait until OpenCode reports a session is idle.
 
 Usage:
-  opencode-harness-cli wait --session ses_...
+  harness-cli wait --session ses_...
 
 Options:
   --session ses_...  Required session id.
@@ -2142,38 +2146,38 @@ Behavior:
   Does not require a fresh FINAL HANDOFF. Use last-summary when you need handoff text.
 
 Example:
-  opencode-harness-cli wait --session ses_...
+  harness-cli wait --session ses_...
 """);
 
     private static void PrintAbortHelp() => Console.WriteLine("""
 abort - abort an OpenCode session deliberately.
 
 Usage:
-  opencode-harness-cli abort --session ses_...
+  harness-cli abort --session ses_...
 
 Example:
-  opencode-harness-cli abort --session ses_...
+  harness-cli abort --session ses_...
 """);
 
     private static void PrintEventsHelp() => Console.WriteLine("""
 events - sample OpenCode server event stream briefly.
 
 Usage:
-  opencode-harness-cli events [--limit N] [--timeout SECONDS] [--server URL]
+  harness-cli events [--limit N] [--timeout SECONDS] [--server URL]
 
 Options:
   --limit N          Maximum events. Default: 10.
   --timeout SECONDS  Stream timeout. Default: 30.
 
 Example:
-  opencode-harness-cli events --limit 10 --timeout 30
+  harness-cli events --limit 10 --timeout 30
 """);
 
     private static void PrintWatchHelp() => Console.WriteLine("""
 watch - send a raw supervision prompt to one session, optionally recurring.
 
 Usage:
-  opencode-harness-cli watch --session ses_... [--prompt TEXT | --prompt-file FILE | stdin] [options]
+  harness-cli watch --session ses_... [--prompt TEXT | --prompt-file FILE | stdin] [options]
 
 Options:
   --session ses_...          Required session id.
@@ -2192,16 +2196,16 @@ Safety:
   Prefer --until-idle, --max-runs, or --max-duration-minutes for bounded supervision unless you intentionally want an indefinite loop.
 
 Examples:
-  opencode-harness-cli watch --session ses_... --directory E:\ --interval-minutes 15 --prompt-file watch.md
-  opencode-harness-cli watch --session ses_... --until-idle --max-runs 12 --interval-minutes 10
-  opencode-harness-cli watch --session ses_... --dry-run --once --prompt "Check progress."
+  harness-cli watch --session ses_... --directory E:\ --interval-minutes 15 --prompt-file watch.md
+  harness-cli watch --session ses_... --until-idle --max-runs 12 --interval-minutes 10
+  harness-cli watch --session ses_... --dry-run --once --prompt "Check progress."
 """);
 
     private static void PrintWatchManyHelp() => Console.WriteLine("""
 watch-many - send raw supervision prompts to multiple sessions, optionally recurring.
 
 Usage:
-  opencode-harness-cli watch-many --session ses_a --session ses_b [--prompt TEXT | --prompt-file FILE | stdin] [options]
+  harness-cli watch-many --session ses_a --session ses_b [--prompt TEXT | --prompt-file FILE | stdin] [options]
 
 Options:
   --session ses_...          Session id. Repeat for each session to supervise.
@@ -2215,15 +2219,15 @@ Options:
   --dry-run                  Print what would be sent without calling OpenCode.
 
 Examples:
-  opencode-harness-cli watch-many --session ses_a --session ses_b --until-idle --max-duration-minutes 120 --prompt-file watch.md
-  opencode-harness-cli watch-many --session ses_a --session ses_b --dry-run --max-runs 1 --prompt "Check progress."
+  harness-cli watch-many --session ses_a --session ses_b --until-idle --max-duration-minutes 120 --prompt-file watch.md
+  harness-cli watch-many --session ses_a --session ses_b --dry-run --max-runs 1 --prompt "Check progress."
 """);
 
     private static void PrintTailHelp() => Console.WriteLine("""
 tail - poll compact recent text messages from a session.
 
 Usage:
-  opencode-harness-cli tail --session ses_... [--limit N] [--interval-seconds N] [--once]
+  harness-cli tail --session ses_... [--limit N] [--interval-seconds N] [--once]
 
 Options:
   --session ses_...       Required session id.
@@ -2232,15 +2236,15 @@ Options:
   --once                  Print one snapshot and exit.
 
 Examples:
-  opencode-harness-cli tail --session ses_... --limit 20 --once
-  opencode-harness-cli tail --session ses_... --interval-seconds 5
+  harness-cli tail --session ses_... --limit 20 --once
+  harness-cli tail --session ses_... --interval-seconds 5
 """);
 
     private static void PrintExportHelp() => Console.WriteLine("""
 export - save session status, final summary, and messages as JSON or Markdown.
 
 Usage:
-  opencode-harness-cli export --session ses_... [--format json|md] [--output FILE] [--limit N]
+  harness-cli export --session ses_... [--format json|md] [--output FILE] [--limit N]
 
 Options:
   --session ses_...  Required session id.
@@ -2249,8 +2253,8 @@ Options:
   --limit N          Limit exported messages. Default: full message history.
 
 Examples:
-  opencode-harness-cli export --session ses_... --format json --output session.json
-  opencode-harness-cli export --session ses_... --format md --output session.md
+  harness-cli export --session ses_... --format json --output session.json
+  harness-cli export --session ses_... --format md --output session.md
 """);
 
     private sealed record Summary(string MessageId, string PartId, string Text);

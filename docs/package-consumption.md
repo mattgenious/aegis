@@ -7,7 +7,7 @@
 - `HarnessCli.Core`: shared contracts, session registry infrastructure, state normalization, and prompt rendering.
 - `HarnessCli.Backends`: OpenCode, Codex, and Pi backend adapters plus backend command orchestration.
 
-The CLI executable remains `opencode-harness-cli` for compatibility and references the same libraries.
+The CLI executable is `harness-cli` and references the same libraries. `opencode-harness-cli` is a migration alias for installed or published command shims, not a separate application identity.
 
 ## Local Pack Smoke
 

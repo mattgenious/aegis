@@ -6,7 +6,7 @@ using HarnessCli.Backends;
 using HarnessCli.Core;
 using HarnessCli.Infrastructure;
 
-namespace OpencodeHarnessCli;
+namespace HarnessCli;
 
 internal static partial class Program
 {
@@ -32,7 +32,7 @@ internal static partial class Program
             ["session", "run", ..] => await WorkMapSessionRun(store, options),
             ["session", "sync", ..] => await WorkMapSessionSync(store, options),
             ["evidence", "add", ..] => await WorkMapEvidenceAdd(store, options),
-            _ => Fail($"Unknown work-map command '{string.Join(' ', options.Positionals)}'. Run `opencode-harness-cli help work-map`.")
+            _ => Fail($"Unknown work-map command '{string.Join(' ', options.Positionals)}'. Run `harness-cli help work-map`.")
         };
     }
 
