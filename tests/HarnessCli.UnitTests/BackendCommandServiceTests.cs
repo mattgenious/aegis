@@ -67,12 +67,51 @@ public sealed class BackendCommandServiceTests
         }
     }
 
+    [Fact]
+    public async Task AskAsyncMarksBackendPromptAsDetachedWhenAsyncWithoutWait()
+    {
+        var service = CreateService(out var tempDir, out var backend);
+        try
+        {
+            var result = await service.AskAsync(new BackendAskRequest(
+                SessionId: null,
+                Title: "service-async",
+                ParentSessionId: null,
+                Directory: tempDir,
+                Prompt: new PromptRequest(
+                    Text: "Do work in the background.",
+                    SourceKind: PromptSourceKind.Inline,
+                    SourceLocation: null),
+                Async: true,
+                Wait: false,
+                Timeout: TimeSpan.FromSeconds(5)));
+
+            Assert.True(result.PostResult.IsSuccess);
+            Assert.Null(result.Summary);
+            Assert.NotNull(backend.LastPrompt);
+            Assert.Equal("true", backend.LastPrompt!.Options["harness.async"]);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
     private static BackendCommandService CreateService(out string tempDir, bool failPrompt = false)
+    {
+        return CreateService(out tempDir, out _, failPrompt);
+    }
+
+    private static BackendCommandService CreateService(
+        out string tempDir,
+        out FakeSessionBackend backend,
+        bool failPrompt = false)
     {
         tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
         var registry = new SessionRegistryService(new FileSessionRegistry(new TempRegistryPathProvider(tempDir)));
-        return new BackendCommandService(new FakeSessionBackend(failPrompt), registry);
+        backend = new FakeSessionBackend(failPrompt);
+        return new BackendCommandService(backend, registry);
     }
 
     private sealed class TempRegistryPathProvider(string directoryPath) : ISessionRegistryPathProvider
@@ -84,6 +123,8 @@ public sealed class BackendCommandServiceTests
     {
         private readonly bool _failPrompt;
         private readonly List<BackendMessage> _messages = [];
+
+        public PromptRequest? LastPrompt { get; private set; }
 
         public FakeSessionBackend(bool failPrompt)
         {
@@ -105,12 +146,18 @@ public sealed class BackendCommandServiceTests
 
         public Task<CommandResult> PostPromptAsync(SessionRecord session, PromptRequest request, CancellationToken cancellationToken = default)
         {
+            LastPrompt = request;
             if (_failPrompt)
             {
                 return Task.FromResult(CommandResult.Failure(2, "fake prompt failed"));
             }
 
             _messages.Add(new BackendMessage("user-1", "user", request.Text));
+            if (request.Options.ContainsKey("harness.async"))
+            {
+                return Task.FromResult(CommandResult.Success());
+            }
+
             _messages.Add(new BackendMessage("assistant-1", "assistant", "FINAL HANDOFF\nfake backend completed", "part-1"));
             return Task.FromResult(CommandResult.Success());
         }

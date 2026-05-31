@@ -11,6 +11,11 @@ public sealed class CodexBackend : ISessionBackend
     private const string CodexBinary = "codex";
     private const string MessageLineSuffix = ".messages.jsonl";
     private const string StatusSuffix = ".status.json";
+    private const string PromptSuffix = ".prompt.txt";
+    private const string StdoutSuffix = ".stdout.jsonl";
+    private const string StderrSuffix = ".stderr.txt";
+    private const string ExitCodeSuffix = ".exitcode.txt";
+    private const string RunScriptSuffix = ".run";
 
     private readonly string? _stateRoot;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
@@ -53,25 +58,12 @@ public sealed class CodexBackend : ISessionBackend
         await SaveStatusAsync(statusPath, "running", cancellationToken);
 
         var prompt = request.Raw ? request.Text : BuildHarnessPrompt(request.Text, request.SummaryMarker);
-        var args = new List<string>
-        {
-            "exec",
-            "--json",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--skip-git-repo-check",
-            prompt
-        };
+        var runDetached = IsDetachedRequest(request);
+        var args = BuildExecArguments(request, session.Directory, runDetached ? "-" : prompt);
 
-        if (!string.IsNullOrWhiteSpace(request.Model))
+        if (runDetached)
         {
-            args.Insert(3, "-m");
-            args.Insert(4, request.Model);
-        }
-
-        if (!string.IsNullOrWhiteSpace(session.Directory))
-        {
-            args.Add("--cd");
-            args.Add(session.Directory);
+            return await StartDetachedAsync(session, prompt, args, cancellationToken);
         }
 
         var startInfo = new ProcessStartInfo
@@ -148,6 +140,7 @@ public sealed class CodexBackend : ISessionBackend
         int limit = 0,
         CancellationToken cancellationToken = default)
     {
+        await RefreshDetachedRunAsync(session, cancellationToken);
         var messagesPath = ResolveMessagesPath(session);
         if (!File.Exists(messagesPath))
         {
@@ -262,6 +255,204 @@ public sealed class CodexBackend : ISessionBackend
                 ?? ResolveSessionPath(session.BackendSessionId, session.Directory)) + MessageLineSuffix;
     }
 
+    private async Task<CommandResult> StartDetachedAsync(
+        SessionRecord session,
+        string prompt,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        var statePath = session.BackendMetadataPath ?? ResolveSessionPath(session.BackendSessionId, session.Directory);
+        var promptPath = statePath + PromptSuffix;
+        var stdoutPath = statePath + StdoutSuffix;
+        var stderrPath = statePath + StderrSuffix;
+        var exitCodePath = statePath + ExitCodeSuffix;
+        Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+
+        await File.WriteAllTextAsync(promptPath, prompt, cancellationToken);
+        DeleteIfExists(stdoutPath);
+        DeleteIfExists(stderrPath);
+        DeleteIfExists(exitCodePath);
+
+        var scriptPath = await WriteDetachedRunScriptAsync(
+            statePath,
+            args,
+            promptPath,
+            stdoutPath,
+            stderrPath,
+            exitCodePath,
+            cancellationToken);
+        var startInfo = DetachedScriptStartInfo(scriptPath);
+
+        try
+        {
+            using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start detached codex runner.");
+            process.StandardInput.Close();
+            return CommandResult.Success($"codex exec started asynchronously as process {process.Id}.");
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 2)
+        {
+            await SaveStatusAsync(ResolveStatusPath(session), "error:runner-not-found", cancellationToken);
+            return CommandResult.Failure(127, "detached runner executable not found", ex.Message);
+        }
+    }
+
+    private async Task RefreshDetachedRunAsync(SessionRecord session, CancellationToken cancellationToken)
+    {
+        var statePath = session.BackendMetadataPath ?? ResolveSessionPath(session.BackendSessionId, session.Directory);
+        var exitCodePath = statePath + ExitCodeSuffix;
+        if (!File.Exists(exitCodePath))
+        {
+            return;
+        }
+
+        var statusPath = ResolveStatusPath(session);
+        var status = await ReadStatusAsync(statusPath, cancellationToken);
+        if (!status.StartsWith("running", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var stdoutPath = statePath + StdoutSuffix;
+        var messagesPath = ResolveMessagesPath(session);
+        if (File.Exists(stdoutPath))
+        {
+            var stdout = await File.ReadAllTextAsync(stdoutPath, cancellationToken);
+            await ReplaceMessagesAsync(messagesPath, ParseCodexMessages(stdout), cancellationToken);
+        }
+
+        var exitText = (await File.ReadAllTextAsync(exitCodePath, cancellationToken)).Trim();
+        var exitCode = int.TryParse(exitText, out var parsed) ? parsed : 1;
+        await SaveStatusAsync(statusPath, exitCode == 0 ? "idle" : $"error:{exitCode}", cancellationToken);
+    }
+
+    private static List<string> BuildExecArguments(PromptRequest request, string? directory, string promptArgument)
+    {
+        var args = new List<string>
+        {
+            "exec",
+            "--json"
+        };
+
+        if (!string.IsNullOrWhiteSpace(request.Model))
+        {
+            args.Add("-m");
+            args.Add(request.Model);
+        }
+
+        args.Add("--dangerously-bypass-approvals-and-sandbox");
+        args.Add("--skip-git-repo-check");
+        args.Add(promptArgument);
+
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            args.Add("--cd");
+            args.Add(directory);
+        }
+
+        return args;
+    }
+
+    private static bool IsDetachedRequest(PromptRequest request) =>
+        request.Options.TryGetValue("harness.async", out var value)
+        && value.Equals("true", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<string> WriteDetachedRunScriptAsync(
+        string statePath,
+        IReadOnlyList<string> args,
+        string promptPath,
+        string stdoutPath,
+        string stderrPath,
+        string exitCodePath,
+        CancellationToken cancellationToken)
+    {
+        var scriptPath = statePath + RunScriptSuffix + (OperatingSystem.IsWindows() ? ".cmd" : ".sh");
+        string script;
+        if (OperatingSystem.IsWindows())
+        {
+            script = "@echo off\r\n"
+                     + string.Join(' ', new[] { CodexBinary }.Concat(args).Select(QuoteWindowsCmdArg))
+                     + " < " + QuoteWindowsCmdArg(promptPath)
+                     + " > " + QuoteWindowsCmdArg(stdoutPath)
+                     + " 2> " + QuoteWindowsCmdArg(stderrPath)
+                     + "\r\n"
+                     + "echo %ERRORLEVEL% > " + QuoteWindowsCmdArg(exitCodePath)
+                     + "\r\n";
+        }
+        else
+        {
+            script = "#!/bin/sh\n"
+                     + string.Join(' ', new[] { CodexBinary }.Concat(args).Select(QuotePosixShellArg))
+                     + " < " + QuotePosixShellArg(promptPath)
+                     + " > " + QuotePosixShellArg(stdoutPath)
+                     + " 2> " + QuotePosixShellArg(stderrPath)
+                     + "\n"
+                     + "printf '%s\\n' \"$?\" > " + QuotePosixShellArg(exitCodePath)
+                     + "\n";
+        }
+
+        await File.WriteAllTextAsync(scriptPath, script, cancellationToken);
+        return scriptPath;
+    }
+
+    private static ProcessStartInfo DetachedScriptStartInfo(string scriptPath)
+    {
+        var startInfo = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            }
+            : new ProcessStartInfo
+            {
+                FileName = "/bin/sh",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+        if (OperatingSystem.IsWindows())
+        {
+            startInfo.ArgumentList.Add("/d");
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add(scriptPath);
+        }
+        else
+        {
+            startInfo.ArgumentList.Add(scriptPath);
+        }
+
+        return startInfo;
+    }
+
+    private static string QuoteWindowsCmdArg(string value)
+    {
+        var escaped = value
+            .Replace("^", "^^", StringComparison.Ordinal)
+            .Replace("&", "^&", StringComparison.Ordinal)
+            .Replace("|", "^|", StringComparison.Ordinal)
+            .Replace("<", "^<", StringComparison.Ordinal)
+            .Replace(">", "^>", StringComparison.Ordinal)
+            .Replace("%", "%%", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
+        return "\"" + escaped + "\"";
+    }
+
+    private static string QuotePosixShellArg(string value) =>
+        "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+    }
+
     private async Task PersistMessagesAsync(string messagesPath, List<CodexStoredMessage> messages, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(messagesPath)!);
@@ -277,6 +468,13 @@ public sealed class CodexBackend : ISessionBackend
 
         existing.AddRange(messages);
         var serialized = JsonSerializer.Serialize(existing, _jsonOptions);
+        await File.WriteAllTextAsync(messagesPath, serialized, cancellationToken);
+    }
+
+    private async Task ReplaceMessagesAsync(string messagesPath, List<CodexStoredMessage> messages, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(messagesPath)!);
+        var serialized = JsonSerializer.Serialize(messages, _jsonOptions);
         await File.WriteAllTextAsync(messagesPath, serialized, cancellationToken);
     }
 

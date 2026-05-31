@@ -214,3 +214,18 @@ public sealed record WorkMapVerificationRecord
 
     public string? Summary { get; init; }
 }
+
+public sealed record WorkMapStoreSnapshot
+{
+    public int SchemaVersion { get; init; } = 1;
+
+    public string Kind { get; init; } = "workMapSnapshot";
+
+    public DateTimeOffset ExportedAtUtc { get; init; } = DateTimeOffset.UtcNow;
+
+    public List<WorkMapMissionRecord> Missions { get; init; } = [];
+
+    public List<WorkMapWorkstreamRecord> Workstreams { get; init; } = [];
+
+    public List<WorkMapAgentSessionRecord> Sessions { get; init; } = [];
+}
