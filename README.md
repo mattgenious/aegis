@@ -1,4 +1,4 @@
-# OpenCode Harness CLI
+# Harness CLI
 
 > Repository now uses a `src/` + `tests/` structure before backend abstraction work.
 
@@ -22,8 +22,8 @@ The goal is not to wrap every backend endpoint. It gives agents a stable, low-fr
 ```powershell
 dotnet build harness-cli.sln
 dotnet test harness-cli.sln
-dotnet publish src/HarnessCli/OpencodeHarnessCli.csproj -c Release -o "$HOME\.local\bin" --self-contained false
-opencode-harness-cli self-test
+dotnet publish src/HarnessCli/HarnessCli.csproj -c Release -o "$HOME\.local\bin" --self-contained false
+harness-cli self-test
 ```
 
 The CLI targets .NET 10 to match the repo test projects and current agent workstation runtime.
@@ -34,25 +34,27 @@ Library/package consumption notes for Baton and other callers are in [docs/packa
 
 > Legacy `scripts/opencode-harness-cli` path references in old docs are preserved for historical context only.
 
-The OpenCode installer publishes versioned `opencode-harness-cli.exe` builds under `$HOME\.local\opencode-harness-cli\versions` and installs a PATH shim at `$HOME\.local\opencode-harness-cli\bin\opencode-harness-cli.cmd`. Open a new terminal after install so the higher-priority shim is used instead of any older locked executable.
+The installer publishes versioned `harness-cli.exe` builds under `$HOME\.local\harness-cli\versions` and installs a primary PATH shim at `$HOME\.local\harness-cli\bin\harness-cli.cmd`. It also keeps `opencode-harness-cli` as a compatibility alias for existing scripts during the transition. Open a new terminal after install so the higher-priority shim is used instead of any older locked executable.
 
 ## Help
 
 Every command supports `-h`, `--help`, and `help <command>`:
 
 ```powershell
-opencode-harness-cli --help
-opencode-harness-cli watch -h
-opencode-harness-cli watch --help
-opencode-harness-cli help watch
+harness-cli --help
+harness-cli watch -h
+harness-cli watch --help
+harness-cli help watch
 ```
+
+During the migration window, `opencode-harness-cli` forwards to the same command when installed by the workspace plugin or produced by `dotnet publish`.
 
 ## Server
 
 Start or verify a local unauthenticated OpenCode server:
 
 ```powershell
-opencode-harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
+harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
 ```
 
 `ensure-server` removes `OPENCODE_SERVER_PASSWORD` and `OPENCODE_SERVER_USERNAME` from the child process so inherited shell auth settings do not accidentally force HTTP Basic auth.
@@ -72,19 +74,19 @@ Preferred automation flow:
 Run a task in a new OpenCode session and extract the final handoff summary:
 
 ```powershell
-opencode-harness-cli ask --model github-copilot/gpt-5.4-mini --variant low --title "Check API docs" --prompt "Read the local API docs and summarize the session endpoints."
+harness-cli ask --model github-copilot/gpt-5.4-mini --variant low --title "Check API docs" --prompt "Read the local API docs and summarize the session endpoints."
 ```
 
 For longer tasks, the default path queues the prompt asynchronously and polls status/messages until the final handoff appears. It does not wait on OpenCode's model response stream:
 
 ```powershell
-opencode-harness-cli ask --timeout 900 --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
+harness-cli ask --timeout 900 --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
 ```
 
 Use `--async` when you want to return immediately and fetch the summary later:
 
 ```powershell
-opencode-harness-cli ask --async --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
+harness-cli ask --async --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
 ```
 
 The CLI wraps prompts with a handoff contract. The delegated agent is told to put the final answer under this exact marker:
@@ -96,7 +98,7 @@ FINAL HANDOFF
 `last-summary` returns only the final assistant text after that marker, anchored after the latest user prompt so older historical handoffs are not mistaken for current progress:
 
 ```powershell
-opencode-harness-cli last-summary --session ses_... --plain
+harness-cli last-summary --session ses_... --plain
 ```
 
 ## Fan-Out Helper
@@ -104,7 +106,7 @@ opencode-harness-cli last-summary --session ses_... --plain
 Use `spawn` to launch multiple implementation sessions without hand-rolling OpenCode API loops:
 
 ```powershell
-opencode-harness-cli spawn --model github-copilot/gpt-5.5 --directory "C:\path\to\repo" --target "issue #5" --target "issue #4"
+harness-cli spawn --model github-copilot/gpt-5.5 --directory "C:\path\to\repo" --target "issue #5" --target "issue #4"
 ```
 
 The command queues each target asynchronously and prints target/session/status JSON for later inspection with `status` and `last-summary`. Add `--wait` when the coordinator should block until each worker returns a `FINAL HANDOFF` summary; without `--wait`, `spawn` only proves the prompt was queued.
@@ -112,13 +114,13 @@ The command queues each target asynchronously and prints target/session/status J
 If a target was already launched, resume it instead of creating a duplicate:
 
 ```powershell
-opencode-harness-cli spawn --model github-copilot/gpt-5.5 --directory "C:\path\to\repo" --target "issue #5" --resume-session "issue #5=ses_..."
+harness-cli spawn --model github-copilot/gpt-5.5 --directory "C:\path\to\repo" --target "issue #5" --resume-session "issue #5=ses_..."
 ```
 
 Use `latest --all` to inspect every matching session title instead of only the newest one:
 
 ```powershell
-opencode-harness-cli latest --search "Ship:" --all --limit 20
+harness-cli latest --search "Ship:" --all --limit 20
 ```
 
 ## Work Map
@@ -128,10 +130,10 @@ Use `work-map` when a coordinator needs durable state for a mission graph: works
 Create a mission, attach a clone-backed workstream, run or link a session, and render an optional observer view:
 
 ```powershell
-opencode-harness-cli work-map create --title "Ship search fixes" --intent "Coordinate independent repo slices"
-opencode-harness-cli work-map stream add --mission mission-... --name "API slice" --role implementer --clone E:\agents\workspaces\api-search-fix
-opencode-harness-cli work-map session run --mission mission-... --stream stream-... --backend codex --directory E:\agents\workspaces\api-search-fix --prompt-file task.md
-opencode-harness-cli work-map show --mission mission-... --format html --output work-map.html
+harness-cli work-map create --title "Ship search fixes" --intent "Coordinate independent repo slices"
+harness-cli work-map stream add --mission mission-... --name "API slice" --role implementer --clone E:\agents\workspaces\api-search-fix
+harness-cli work-map session run --mission mission-... --stream stream-... --backend codex --directory E:\agents\workspaces\api-search-fix --prompt-file task.md
+harness-cli work-map show --mission mission-... --format html --output work-map.html
 ```
 
 The HTML output is a static optional observer over the same JSON records. It is not required for harness-cli execution and does not need a server.
@@ -141,20 +143,20 @@ The HTML output is a static optional observer over the same JSON records. It is 
 ## Useful Commands
 
 ```powershell
-opencode-harness-cli health
-opencode-harness-cli self-test
-opencode-harness-cli new --title "scratch"
-opencode-harness-cli spawn --target "issue #5" --target "issue #4" --model github-copilot/gpt-5.5
-opencode-harness-cli latest --search "Check API docs"
-opencode-harness-cli status
-opencode-harness-cli status --session ses_...
-opencode-harness-cli wait --session ses_...
-opencode-harness-cli messages --session ses_... --limit 20
-opencode-harness-cli tail --session ses_... --limit 20 --once
-opencode-harness-cli events --limit 10 --timeout 30
-opencode-harness-cli abort --session ses_...
-opencode-harness-cli export --session ses_... --format md --output session-export.md
-opencode-harness-cli work-map show --mission mission-... --format md
+harness-cli health
+harness-cli self-test
+harness-cli new --title "scratch"
+harness-cli spawn --target "issue #5" --target "issue #4" --model github-copilot/gpt-5.5
+harness-cli latest --search "Check API docs"
+harness-cli status
+harness-cli status --session ses_...
+harness-cli wait --session ses_...
+harness-cli messages --session ses_... --limit 20
+harness-cli tail --session ses_... --limit 20 --once
+harness-cli events --limit 10 --timeout 30
+harness-cli abort --session ses_...
+harness-cli export --session ses_... --format md --output session-export.md
+harness-cli work-map show --mission mission-... --format md
 ```
 
 ## Backend Support Matrix
@@ -195,7 +197,7 @@ Legend: ✅ command fully wired in this release, ⚙️ adapter exists and is te
 Use `--no-reply` to write a user message without calling a model:
 
 ```powershell
-opencode-harness-cli ask --no-reply --prompt "Context-only probe."
+harness-cli ask --no-reply --prompt "Context-only probe."
 ```
 
 ## Session Watch
@@ -203,7 +205,7 @@ opencode-harness-cli ask --no-reply --prompt "Context-only probe."
 Send a prompt to an existing OpenCode session immediately, then repeat it on an interval:
 
 ```powershell
-opencode-harness-cli watch --session ses_... --directory "C:\path\to\workspace" --interval-minutes 15 --prompt "Check progress and continue safe shipping work."
+harness-cli watch --session ses_... --directory "C:\path\to\workspace" --interval-minutes 15 --prompt "Check progress and continue safe shipping work."
 ```
 
 `watch` sends the prompt exactly as provided. It does not add the delegated pseudo-subagent handoff wrapper used by `ask`. Use `--prompt-file` for longer recurring supervision prompts.
@@ -211,20 +213,20 @@ opencode-harness-cli watch --session ses_... --directory "C:\path\to\workspace" 
 `wait` is the passive way to block until existing work becomes idle. It sends no prompt and deliberately has no timeout option; press Ctrl+C to stop waiting.
 
 ```powershell
-opencode-harness-cli wait --session ses_...
+harness-cli wait --session ses_...
 ```
 
 Stop active supervision automatically when the session is idle, after a maximum number of rounds, or after a maximum duration:
 
 ```powershell
-opencode-harness-cli watch --session ses_... --until-idle --max-runs 12 --interval-minutes 10
-opencode-harness-cli watch --session ses_... --max-duration-minutes 120 --interval-minutes 15
+harness-cli watch --session ses_... --until-idle --max-runs 12 --interval-minutes 10
+harness-cli watch --session ses_... --max-duration-minutes 120 --interval-minutes 15
 ```
 
 Watch several sessions from one supervisor process by repeating `--session`:
 
 ```powershell
-opencode-harness-cli watch-many --session ses_a --session ses_b --until-idle --interval-minutes 10 --prompt-file watch-prompt.md
+harness-cli watch-many --session ses_a --session ses_b --until-idle --interval-minutes 10 --prompt-file watch-prompt.md
 ```
 
 ## Tail And Export
@@ -232,14 +234,14 @@ opencode-harness-cli watch-many --session ses_a --session ses_b --until-idle --i
 Use `tail` for a compact polling view of recent text messages. Add `--once` for a one-shot snapshot, or omit it to keep polling:
 
 ```powershell
-opencode-harness-cli tail --session ses_... --limit 20 --interval-seconds 5
+harness-cli tail --session ses_... --limit 20 --interval-seconds 5
 ```
 
 Use `export` to save status, final handoff summary, and messages as JSON or Markdown:
 
 ```powershell
-opencode-harness-cli export --session ses_... --format json --output session.json
-opencode-harness-cli export --session ses_... --format md --output session.md
+harness-cli export --session ses_... --format json --output session.json
+harness-cli export --session ses_... --format md --output session.md
 ```
 
 ## Notes
