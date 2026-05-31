@@ -2,6 +2,7 @@
 bin/
 obj/
 TestResults/
+node_modules/
 
 # User profile / IDE files
 .vs/

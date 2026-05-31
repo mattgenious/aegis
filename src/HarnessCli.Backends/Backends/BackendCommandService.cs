@@ -94,7 +94,13 @@ public sealed class BackendCommandService
     {
         var session = await GetOrCreateSessionAsync(request);
         var anchorIndex = await GetLatestUserMessageIndexAsync(session);
-        var postResult = await _backend.PostPromptAsync(session, request.Prompt);
+        var prompt = request.Async && !request.Wait
+            ? request.Prompt with
+            {
+                Options = request.Prompt.Options.SetItem("harness.async", "true")
+            }
+            : request.Prompt;
+        var postResult = await _backend.PostPromptAsync(session, prompt);
         if (!postResult.IsSuccess)
         {
             return new BackendAskResult(session, null, postResult);

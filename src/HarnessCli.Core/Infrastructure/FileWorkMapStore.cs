@@ -37,6 +37,8 @@ public sealed class FileWorkMapStore : IWorkMapStore
         _pathProvider = pathProvider ?? new DefaultWorkMapPathProvider();
     }
 
+    public string DirectoryPath => _pathProvider.DirectoryPath;
+
     public Task SaveMissionAsync(WorkMapMissionRecord mission, CancellationToken cancellationToken = default) =>
         SaveAsync(PathFor("missions", mission.Id), mission, cancellationToken);
 
@@ -58,11 +60,14 @@ public sealed class FileWorkMapStore : IWorkMapStore
     public Task<WorkMapWorkstreamRecord?> GetWorkstreamAsync(string workstreamId, CancellationToken cancellationToken = default) =>
         LoadAsync<WorkMapWorkstreamRecord>(PathFor("workstreams", workstreamId), cancellationToken);
 
+    public Task<IReadOnlyList<WorkMapWorkstreamRecord>> GetWorkstreamsAsync(CancellationToken cancellationToken = default) =>
+        LoadAllAsync<WorkMapWorkstreamRecord>("workstreams", cancellationToken);
+
     public async Task<IReadOnlyList<WorkMapWorkstreamRecord>> GetWorkstreamsAsync(
         string missionId,
         CancellationToken cancellationToken = default)
     {
-        var all = await LoadAllAsync<WorkMapWorkstreamRecord>("workstreams", cancellationToken);
+        var all = await GetWorkstreamsAsync(cancellationToken);
         return all.Where(item => string.Equals(item.MissionId, missionId, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 
@@ -81,11 +86,14 @@ public sealed class FileWorkMapStore : IWorkMapStore
     public Task<WorkMapAgentSessionRecord?> GetAgentSessionAsync(string sessionId, CancellationToken cancellationToken = default) =>
         LoadAsync<WorkMapAgentSessionRecord>(PathFor("sessions", sessionId), cancellationToken);
 
+    public Task<IReadOnlyList<WorkMapAgentSessionRecord>> GetAgentSessionsAsync(CancellationToken cancellationToken = default) =>
+        LoadAllAsync<WorkMapAgentSessionRecord>("sessions", cancellationToken);
+
     public async Task<IReadOnlyList<WorkMapAgentSessionRecord>> GetAgentSessionsAsync(
         string missionId,
         CancellationToken cancellationToken = default)
     {
-        var all = await LoadAllAsync<WorkMapAgentSessionRecord>("sessions", cancellationToken);
+        var all = await GetAgentSessionsAsync(cancellationToken);
         return all.Where(item => string.Equals(item.MissionId, missionId, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 
