@@ -24,6 +24,8 @@ public sealed class DefaultWorkMapPathProvider : IWorkMapPathProvider
 
 public sealed class FileWorkMapStore : IWorkMapStore
 {
+    private const int MaxFileAttempts = 25;
+
     private readonly IWorkMapPathProvider _pathProvider;
     private readonly JsonSerializerOptions _options = new(JsonSerializerDefaults.Web)
     {
@@ -44,6 +46,12 @@ public sealed class FileWorkMapStore : IWorkMapStore
     public Task<IReadOnlyList<WorkMapMissionRecord>> GetMissionsAsync(CancellationToken cancellationToken = default) =>
         LoadAllAsync<WorkMapMissionRecord>("missions", cancellationToken);
 
+    public Task<WorkMapMissionRecord> UpdateMissionAsync(
+        string missionId,
+        Func<WorkMapMissionRecord, WorkMapMissionRecord> update,
+        CancellationToken cancellationToken = default) =>
+        UpdateAsync(PathFor("missions", missionId), update, cancellationToken);
+
     public Task SaveWorkstreamAsync(WorkMapWorkstreamRecord workstream, CancellationToken cancellationToken = default) =>
         SaveAsync(PathFor("workstreams", workstream.Id), workstream, cancellationToken);
 
@@ -57,6 +65,15 @@ public sealed class FileWorkMapStore : IWorkMapStore
         var all = await LoadAllAsync<WorkMapWorkstreamRecord>("workstreams", cancellationToken);
         return all.Where(item => string.Equals(item.MissionId, missionId, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
+
+    public Task<WorkMapWorkstreamRecord> UpdateWorkstreamAsync(
+        string workstreamId,
+        Func<WorkMapWorkstreamRecord, WorkMapWorkstreamRecord> update,
+        CancellationToken cancellationToken = default) =>
+        UpdateAsync(PathFor("workstreams", workstreamId), update, cancellationToken);
+
+    public Task DeleteWorkstreamAsync(string workstreamId, CancellationToken cancellationToken = default) =>
+        DeleteAsync(PathFor("workstreams", workstreamId), cancellationToken);
 
     public Task SaveAgentSessionAsync(WorkMapAgentSessionRecord session, CancellationToken cancellationToken = default) =>
         SaveAsync(PathFor("sessions", session.Id), session, cancellationToken);
@@ -72,11 +89,85 @@ public sealed class FileWorkMapStore : IWorkMapStore
         return all.Where(item => string.Equals(item.MissionId, missionId, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 
+    public Task<WorkMapAgentSessionRecord> UpdateAgentSessionAsync(
+        string sessionId,
+        Func<WorkMapAgentSessionRecord, WorkMapAgentSessionRecord> update,
+        CancellationToken cancellationToken = default) =>
+        UpdateAsync(PathFor("sessions", sessionId), update, cancellationToken);
+
     private async Task SaveAsync<T>(string path, T value, CancellationToken cancellationToken)
     {
+        await WithRecordLockAsync(path, () => SaveUnlockedAsync(path, value, cancellationToken), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<T> UpdateAsync<T>(string path, Func<T, T> update, CancellationToken cancellationToken)
+    {
+        T? updated = default;
+        await WithRecordLockAsync(
+            path,
+            async () =>
+            {
+                var current = await LoadUnlockedAsync<T>(path, cancellationToken).ConfigureAwait(false);
+                if (current is null)
+                {
+                    throw new ArgumentException($"Unknown work-map record '{Path.GetFileNameWithoutExtension(path)}'.");
+                }
+
+                updated = update(current);
+                await SaveUnlockedAsync(path, updated, cancellationToken).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return updated!;
+    }
+
+    private async Task DeleteAsync(string path, CancellationToken cancellationToken)
+    {
+        await WithRecordLockAsync(
+            path,
+            async () =>
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                await Task.CompletedTask.ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task SaveUnlockedAsync<T>(string path, T value, CancellationToken cancellationToken)
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
-        await JsonSerializer.SerializeAsync(stream, value, _options, cancellationToken).ConfigureAwait(false);
+        var tempPath = Path.Combine(
+            Path.GetDirectoryName(path)!,
+            $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            await using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                await JsonSerializer.SerializeAsync(stream, value, _options, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            if (File.Exists(path))
+            {
+                File.Replace(tempPath, path, null, ignoreMetadataErrors: true);
+            }
+            else
+            {
+                File.Move(tempPath, path);
+            }
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
     }
 
     private async Task<T?> LoadAsync<T>(string path, CancellationToken cancellationToken)
@@ -86,7 +177,19 @@ public sealed class FileWorkMapStore : IWorkMapStore
             return default;
         }
 
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return await RetryFileOperationAsync(
+            () => LoadUnlockedAsync<T>(path, cancellationToken),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<T?> LoadUnlockedAsync<T>(string path, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(path))
+        {
+            return default;
+        }
+
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         return await JsonSerializer.DeserializeAsync<T>(stream, _options, cancellationToken).ConfigureAwait(false);
     }
 
@@ -109,6 +212,56 @@ public sealed class FileWorkMapStore : IWorkMapStore
         }
 
         return records;
+    }
+
+    private static async Task WithRecordLockAsync(string path, Func<Task> action, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var lockPath = path + ".lock";
+        for (var attempt = 1; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await using var lockStream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                await action().ConfigureAwait(false);
+                return;
+            }
+            catch (IOException) when (attempt < MaxFileAttempts)
+            {
+                await DelayBeforeRetry(attempt, cancellationToken).ConfigureAwait(false);
+            }
+            catch (UnauthorizedAccessException) when (attempt < MaxFileAttempts)
+            {
+                await DelayBeforeRetry(attempt, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task<T> RetryFileOperationAsync<T>(Func<Task<T>> operation, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return await operation().ConfigureAwait(false);
+            }
+            catch (IOException) when (attempt < MaxFileAttempts)
+            {
+                await DelayBeforeRetry(attempt, cancellationToken).ConfigureAwait(false);
+            }
+            catch (UnauthorizedAccessException) when (attempt < MaxFileAttempts)
+            {
+                await DelayBeforeRetry(attempt, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static Task DelayBeforeRetry(int attempt, CancellationToken cancellationToken)
+    {
+        var delay = Math.Min(250, 10 + (attempt * 15));
+        return Task.Delay(TimeSpan.FromMilliseconds(delay), cancellationToken);
     }
 
     private string PathFor(string folder, string id)

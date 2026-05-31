@@ -136,7 +136,20 @@ harness-cli work-map session run --mission mission-... --stream stream-... --bac
 harness-cli work-map show --mission mission-... --format html --output work-map.html
 ```
 
+Keep the map current as workers report back:
+
+```powershell
+harness-cli work-map mission update --mission mission-... --status in-progress --next-action "Review worker handoffs"
+harness-cli work-map stream update --mission mission-... --stream stream-... --status needs-review --integration-action "Cherry-pick patch and run tests"
+harness-cli work-map session sync --mission mission-... --all
+harness-cli work-map session handoff --session codex-... --summary "Patch is ready; tests passed."
+harness-cli work-map session blocker set --session codex-... --summary "Cannot run tests: SDK missing" --evidence "dotnet test failed before restore"
+harness-cli work-map session verify --session codex-... --kind parent-review --result pass --summary "Diff and tests checked by coordinator."
+```
+
 The HTML output is a static optional observer over the same JSON records. It is not required for harness-cli execution and does not need a server.
+
+Work-map records use record-level locked mutations and atomic file replacement so multiple worker processes can add streams, sessions, and evidence to the same mission without clobbering each other. Session records store bounded provider-neutral message excerpts and status observations for continuation and optional observer UIs.
 
 `work-map` uses clone/clone-path terminology deliberately. It records detached full task clones; it does not create or require git worktrees.
 
@@ -157,6 +170,7 @@ harness-cli events --limit 10 --timeout 30
 harness-cli abort --session ses_...
 harness-cli export --session ses_... --format md --output session-export.md
 harness-cli work-map show --mission mission-... --format md
+harness-cli work-map session sync --mission mission-... --all
 ```
 
 ## Backend Support Matrix
@@ -188,7 +202,7 @@ Legend: ✅ command fully wired in this release, ⚙️ adapter exists and is te
 - `--backend` currently accepts `opencode`, `codex`, and `pi` and is validated at parse time.
 - OpenCode semantics remain the compatibility baseline for prompt wrapping, handoff markers, and summary extraction behavior.
 - Codex and Pi adapters use local persistent backend state outside the target repository by default, under the platform app data directory or `HARNESS_CLI_BACKEND_STATE_DIR` when set. This avoids dirtying the repo and prevents delegated agents from deleting their own session transcript.
-- Work-map mission/session history uses a separate provider-neutral store under `HARNESS_CLI_WORK_MAP_DIR` or app data `harness-cli/work-map`. This store is safe for optional observer UIs and future SQLite migration without changing the conceptual model.
+- Work-map mission/session history uses a separate provider-neutral store under `HARNESS_CLI_WORK_MAP_DIR` or app data `harness-cli/work-map`. This store is safe for optional observer UIs and future SQLite migration without changing the conceptual model. JSON records are updated with record-level locks and atomic replacement; observer UIs should read the records but should not be required for harness-cli execution.
 - Use `--raw` when you want a backend to receive prompt text verbatim.
 - See [docs/multi-backend-rollout.md](./docs/multi-backend-rollout.md) for staged parity status and rollout checklist.
 

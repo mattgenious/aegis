@@ -27,11 +27,21 @@ internal static partial class Program
             ["list", ..] => await WorkMapList(store, options),
             ["show", ..] => await WorkMapShow(store, options),
             ["brief", ..] => await WorkMapBrief(store, options),
+            ["mission", "update", ..] => await WorkMapMissionUpdate(store, options),
             ["stream", "add", ..] => await WorkMapStreamAdd(store, options),
+            ["stream", "update", ..] => await WorkMapStreamUpdate(store, options),
+            ["stream", "delete", ..] => await WorkMapStreamDelete(store, options),
+            ["stream", "remove", ..] => await WorkMapStreamDelete(store, options),
             ["session", "link", ..] => await WorkMapSessionLink(store, options),
             ["session", "run", ..] => await WorkMapSessionRun(store, options),
             ["session", "sync", ..] => await WorkMapSessionSync(store, options),
+            ["session", "update", ..] => await WorkMapSessionUpdate(store, options),
+            ["session", "handoff", ..] => await WorkMapSessionHandoff(store, options),
+            ["session", "blocker", "set", ..] => await WorkMapSessionBlocker(store, options),
+            ["session", "verify", ..] => await WorkMapVerificationAdd(store, options),
             ["evidence", "add", ..] => await WorkMapEvidenceAdd(store, options),
+            ["evidence", "remove", ..] => await WorkMapEvidenceRemove(store, options),
+            ["verification", "add", ..] => await WorkMapVerificationAdd(store, options),
             _ => Fail($"Unknown work-map command '{string.Join(' ', options.Positionals)}'. Run `harness-cli help work-map`.")
         };
     }
@@ -86,6 +96,35 @@ internal static partial class Program
         return 0;
     }
 
+    private static async Task<int> WorkMapMissionUpdate(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var missionId = Require(options.MissionId, "--mission");
+        var updated = await store.UpdateMissionAsync(missionId, mission =>
+        {
+            var events = mission.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "missionUpdated",
+                Summary = "Mission metadata updated."
+            });
+
+            return mission with
+            {
+                Title = options.Title ?? mission.Title,
+                Intent = options.Intent ?? mission.Intent,
+                Status = options.Status ?? mission.Status,
+                NextAction = options.NextAction ?? mission.NextAction,
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+
+        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        return 0;
+    }
+
     private static async Task<int> WorkMapStreamAdd(IWorkMapStore store, WorkMapArgs options)
     {
         var now = DateTimeOffset.UtcNow;
@@ -108,39 +147,139 @@ internal static partial class Program
             UpdatedAtUtc = now
         };
 
-        var missionStreams = mission.WorkstreamIds.ToList();
-        AddUnique(missionStreams, streamId);
-        var edges = mission.Edges.ToList();
-        foreach (var dependency in options.DependsOn)
+        await store.SaveWorkstreamAsync(workstream);
+        await store.UpdateMissionAsync(mission.Id, current =>
         {
-            edges.Add(new WorkMapEdgeRecord
+            var missionStreams = current.WorkstreamIds.ToList();
+            AddUnique(missionStreams, streamId);
+            var edges = current.Edges.ToList();
+            foreach (var dependency in options.DependsOn)
             {
-                FromId = streamId,
-                ToId = dependency,
-                Kind = "dependsOn"
-            });
-        }
+                if (!edges.Any(edge =>
+                        string.Equals(edge.FromId, streamId, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(edge.ToId, dependency, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(edge.Kind, "dependsOn", StringComparison.OrdinalIgnoreCase)))
+                {
+                    edges.Add(new WorkMapEdgeRecord
+                    {
+                        FromId = streamId,
+                        ToId = dependency,
+                        Kind = "dependsOn"
+                    });
+                }
+            }
 
-        var events = mission.Events.ToList();
-        events.Add(new WorkMapEventRecord
-        {
-            AtUtc = now,
-            Type = "workstreamAdded",
-            Summary = $"Added workstream '{workstream.Name}'."
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "workstreamAdded",
+                Summary = $"Added workstream '{workstream.Name}'."
+            });
+
+            return current with
+            {
+                WorkstreamIds = missionStreams,
+                Edges = edges,
+                Events = events,
+                Status = current.Status == "planned" ? "in-progress" : current.Status,
+                UpdatedAtUtc = now
+            };
         });
 
-        mission = mission with
-        {
-            WorkstreamIds = missionStreams,
-            Edges = edges,
-            Events = events,
-            Status = mission.Status == "planned" ? "in-progress" : mission.Status,
-            UpdatedAtUtc = now
-        };
-
-        await store.SaveWorkstreamAsync(workstream);
-        await store.SaveMissionAsync(mission);
         WriteJson(JsonSerializer.SerializeToNode(workstream, JsonOptions));
+        return 0;
+    }
+
+    private static async Task<int> WorkMapStreamUpdate(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var mission = await RequireMission(store, options.MissionId);
+        var current = await RequireWorkstream(store, options.StreamId);
+        EnsureMissionOwnsWorkstream(mission, current);
+
+        var updated = await store.UpdateWorkstreamAsync(current.Id, stream => stream with
+        {
+            Name = options.Name ?? stream.Name,
+            Role = options.Role ?? stream.Role,
+            Target = options.Target ?? stream.Target,
+            ClonePath = options.ClonePath is null ? stream.ClonePath : NormalizeOptionalPath(options.ClonePath),
+            SourceRepoPath = options.SourceRepoPath is null ? stream.SourceRepoPath : NormalizeOptionalPath(options.SourceRepoPath),
+            Branch = options.Branch ?? stream.Branch,
+            Status = options.Status ?? stream.Status,
+            IntegrationAction = options.IntegrationAction ?? stream.IntegrationAction,
+            UpdatedAtUtc = now
+        });
+
+        await store.UpdateMissionAsync(mission.Id, item =>
+        {
+            var streams = item.WorkstreamIds.ToList();
+            AddUnique(streams, updated.Id);
+            var events = item.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "workstreamUpdated",
+                Summary = $"Updated workstream '{updated.Name}'."
+            });
+
+            return item with
+            {
+                WorkstreamIds = streams,
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+
+        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        return 0;
+    }
+
+    private static async Task<int> WorkMapStreamDelete(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var mission = await RequireMission(store, options.MissionId);
+        var stream = await RequireWorkstream(store, options.StreamId);
+        EnsureMissionOwnsWorkstream(mission, stream);
+        if (stream.SessionIds.Count > 0 && !options.Force)
+        {
+            return Fail($"Workstream '{stream.Id}' has linked sessions. Pass --force to remove the stream record anyway.");
+        }
+
+        await store.DeleteWorkstreamAsync(stream.Id);
+        var updatedMission = await store.UpdateMissionAsync(mission.Id, item =>
+        {
+            var streams = item.WorkstreamIds
+                .Where(id => !string.Equals(id, stream.Id, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var edges = item.Edges
+                .Where(edge =>
+                    !string.Equals(edge.FromId, stream.Id, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(edge.ToId, stream.Id, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var events = item.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "workstreamDeleted",
+                Summary = $"Deleted workstream '{stream.Name}'."
+            });
+
+            return item with
+            {
+                WorkstreamIds = streams,
+                Edges = edges,
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+
+        WriteJson(new JsonObject
+        {
+            ["missionID"] = updatedMission.Id,
+            ["streamID"] = stream.Id,
+            ["deleted"] = true
+        });
         return 0;
     }
 
@@ -152,7 +291,9 @@ internal static partial class Program
         EnsureMissionOwnsWorkstream(mission, workstream);
 
         var sessionId = Require(options.SessionId, "--session");
-        var backend = options.Backend ?? InferBackendFromSessionId(sessionId) ?? "codex";
+        var backend = options.Backend is null
+            ? InferBackendFromSessionId(sessionId) ?? "codex"
+            : ParseBackend(options.Backend).ToOptionValue();
         var session = new WorkMapAgentSessionRecord
         {
             Id = sessionId,
@@ -229,11 +370,26 @@ internal static partial class Program
             Wait: options.Wait,
             Timeout: TimeSpan.FromSeconds(options.TimeoutSeconds)));
 
-        var status = result.Summary is not null
+        var states = await commands.GetStatusAsync(result.Session.SessionId);
+        var state = states.FirstOrDefault();
+        var summary = result.Summary;
+        if (summary is null && result.PostResult.IsSuccess && state?.HasFreshSummary == true)
+        {
+            summary = await commands.GetLastSummaryAsync(result.Session.SessionId, options.SummaryMarker);
+        }
+
+        IReadOnlyList<BackendMessage> messages = result.PostResult.IsSuccess
+            ? await commands.GetMessagesAsync(result.Session.SessionId, options.MessageLimit)
+            : Array.Empty<BackendMessage>();
+        var messageRecords = EnsurePromptMessage(prompt, now, ToWorkMapMessages(messages));
+        List<WorkMapStatusObservationRecord> observations = state is null
+            ? []
+            : new List<WorkMapStatusObservationRecord> { ToWorkMapStatusObservation(state, DateTimeOffset.UtcNow) };
+
+        var status = summary is not null
             ? "handoff"
-            : options.Async && !options.Wait
-                ? "queued"
-                : "waiting";
+            : state?.EffectiveStatus
+              ?? (options.Async && !options.Wait ? "queued" : "waiting");
         WorkMapBlockerRecord? blocker = null;
         if (!result.PostResult.IsSuccess)
         {
@@ -255,7 +411,7 @@ internal static partial class Program
                 Summary = $"Prompt sent through {backend.Kind.ToOptionValue()}."
             }
         };
-        if (result.Summary is not null)
+        if (summary is not null)
         {
             events.Add(new WorkMapEventRecord
             {
@@ -283,12 +439,14 @@ internal static partial class Program
             CreatedAtUtc = now,
             UpdatedAtUtc = DateTimeOffset.UtcNow,
             Events = events,
-            FinalHandoff = result.Summary is null
+            Messages = messageRecords,
+            StatusObservations = observations,
+            FinalHandoff = summary is null
                 ? null
                 : new WorkMapHandoffRecord
                 {
                     AtUtc = DateTimeOffset.UtcNow,
-                    Text = result.Summary.Text
+                    Text = summary.Text
                 },
             Blocker = blocker
         };
@@ -315,8 +473,68 @@ internal static partial class Program
 
     private static async Task<int> WorkMapSessionSync(IWorkMapStore store, WorkMapArgs options)
     {
+        if (options.All)
+        {
+            var mission = await RequireMission(store, options.MissionId);
+            var sessions = await store.GetAgentSessionsAsync(mission.Id);
+            var results = new JsonArray();
+            foreach (var session in sessions)
+            {
+                try
+                {
+                    var synced = await SyncWorkMapSession(store, session, options);
+                    results.Add(JsonSerializer.SerializeToNode(synced, JsonOptions));
+                }
+                catch (Exception ex)
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    await store.UpdateAgentSessionAsync(session.Id, current =>
+                    {
+                        var events = current.Events.ToList();
+                        events.Add(new WorkMapEventRecord
+                        {
+                            AtUtc = now,
+                            Type = "syncFailed",
+                            Summary = ex.Message
+                        });
+
+                        return current with
+                        {
+                            Status = "sync-failed",
+                            Events = events,
+                            Blocker = new WorkMapBlockerRecord
+                            {
+                                AtUtc = now,
+                                Summary = "Session sync failed.",
+                                Evidence = ex.Message
+                            },
+                            UpdatedAtUtc = now
+                        };
+                    });
+                    results.Add(new JsonObject
+                    {
+                        ["sessionID"] = session.Id,
+                        ["status"] = "sync-failed",
+                        ["error"] = ex.Message
+                    });
+                }
+            }
+
+            WriteJson(results);
+            return 0;
+        }
+
+        var updated = await SyncWorkMapSession(store, await RequireAgentSession(store, options.SessionId), options);
+        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        return 0;
+    }
+
+    private static async Task<WorkMapAgentSessionRecord> SyncWorkMapSession(
+        IWorkMapStore store,
+        WorkMapAgentSessionRecord session,
+        WorkMapArgs options)
+    {
         var now = DateTimeOffset.UtcNow;
-        var session = await RequireAgentSession(store, options.SessionId);
         var backendKind = ParseBackend(session.Backend);
         using var http = CreateHttpClient(options.Server ?? DefaultServer);
         var backend = CreateBackend(backendKind, new OpenCodeClient(http));
@@ -324,28 +542,182 @@ internal static partial class Program
         var states = await commands.GetStatusAsync(session.Id);
         var state = states.FirstOrDefault();
         var summary = await commands.GetLastSummaryAsync(session.Id, options.SummaryMarker);
-        var events = session.Events.ToList();
-        events.Add(new WorkMapEventRecord
-        {
-            AtUtc = now,
-            Type = "synced",
-            Summary = state is null ? "No status snapshot returned." : $"Status observed as {state.EffectiveStatus}."
-        });
+        var messages = await commands.GetMessagesAsync(session.Id, options.MessageLimit);
+        var incomingMessages = ToWorkMapMessages(messages);
 
-        session = session with
+        var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
         {
-            Status = summary is not null ? "handoff" : state?.EffectiveStatus ?? session.Status,
-            UpdatedAtUtc = now,
-            Events = events,
-            FinalHandoff = summary is null ? session.FinalHandoff : new WorkMapHandoffRecord
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
             {
                 AtUtc = now,
-                Text = summary.Text
+                Type = "synced",
+                Summary = state is null ? "No status snapshot returned." : $"Status observed as {state.EffectiveStatus}."
+            });
+
+            var observations = current.StatusObservations.ToList();
+            if (state is not null)
+            {
+                observations.Add(ToWorkMapStatusObservation(state, now));
             }
+
+            return current with
+            {
+                Status = summary is not null ? "handoff" : state?.EffectiveStatus ?? current.Status,
+                UpdatedAtUtc = now,
+                Events = events,
+                Messages = MergeWorkMapMessages(current.Messages, incomingMessages),
+                StatusObservations = observations,
+                FinalHandoff = summary is null ? current.FinalHandoff : new WorkMapHandoffRecord
+                {
+                    AtUtc = now,
+                    Text = summary.Text
+                }
+            };
+        });
+        await UpdateSessionParents(store, updated, now, "sessionSynced", state is null ? "No status snapshot returned." : $"Status observed as {state.EffectiveStatus}.");
+        return updated;
+    }
+
+    private static async Task<int> WorkMapSessionUpdate(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = await RequireAgentSession(store, options.SessionId);
+        var backend = options.Backend is null ? null : ParseBackend(options.Backend).ToOptionValue();
+        var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
+        {
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "updated",
+                Summary = "Session metadata updated."
+            });
+
+            return current with
+            {
+                DisplayName = options.DisplayName ?? current.DisplayName,
+                Title = options.Title ?? current.Title,
+                Role = options.Role ?? current.Role,
+                Backend = backend ?? current.Backend,
+                BackendSessionId = options.BackendSessionId ?? current.BackendSessionId,
+                Provider = options.Provider ?? current.Provider,
+                Model = options.Model ?? current.Model,
+                Variant = options.Variant ?? current.Variant,
+                Directory = options.Directory is null ? current.Directory : NormalizeOptionalPath(options.Directory),
+                Status = options.Status ?? current.Status,
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+
+        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        return 0;
+    }
+
+    private static async Task<int> WorkMapSessionHandoff(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var text = await ReadTextOption(options, "--summary or --file");
+        var session = await RequireAgentSession(store, options.SessionId);
+        var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
+        {
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "handoffRecorded",
+                Summary = "Final handoff recorded."
+            });
+
+            return current with
+            {
+                Status = options.Status ?? "handoff",
+                FinalHandoff = new WorkMapHandoffRecord
+                {
+                    AtUtc = now,
+                    Text = text
+                },
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+
+        await UpdateSessionParents(store, updated, now, "sessionHandoffRecorded", "Session handoff recorded.");
+        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        return 0;
+    }
+
+    private static async Task<int> WorkMapSessionBlocker(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var summary = Require(options.Summary, "--summary");
+        var session = await RequireAgentSession(store, options.SessionId);
+        var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
+        {
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "blockerRecorded",
+                Summary = summary
+            });
+
+            return current with
+            {
+                Status = options.Status ?? "blocked",
+                Blocker = new WorkMapBlockerRecord
+                {
+                    AtUtc = now,
+                    Summary = summary,
+                    Evidence = options.EvidenceText
+                },
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+
+        await UpdateSessionParents(store, updated, now, "sessionBlockerRecorded", summary);
+        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        return 0;
+    }
+
+    private static async Task<int> WorkMapVerificationAdd(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = await RequireAgentSession(store, options.SessionId);
+        var verification = new WorkMapVerificationRecord
+        {
+            AtUtc = now,
+            Kind = Require(options.Kind, "--kind"),
+            Result = Require(options.Result, "--result"),
+            Summary = options.Summary
         };
 
-        await store.SaveAgentSessionAsync(session);
-        WriteJson(JsonSerializer.SerializeToNode(session, JsonOptions));
+        var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
+        {
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "verificationRecorded",
+                Summary = $"{verification.Kind}: {verification.Result}"
+            });
+
+            var verifications = current.Verification.ToList();
+            verifications.Add(verification);
+
+            return current with
+            {
+                Verification = verifications,
+                Status = options.Status ?? current.Status,
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+
+        await UpdateSessionParents(store, updated, now, "sessionVerificationRecorded", $"{verification.Kind}: {verification.Result}");
+        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
         return 0;
     }
 
@@ -366,39 +738,96 @@ internal static partial class Program
         {
             var workstream = await RequireWorkstream(store, options.StreamId);
             EnsureMissionOwnsWorkstream(mission, workstream);
-            var evidenceList = workstream.Evidence.ToList();
-            evidenceList.Add(evidence);
-            await store.SaveWorkstreamAsync(workstream with
+            await store.UpdateWorkstreamAsync(workstream.Id, current =>
             {
-                Evidence = evidenceList,
-                UpdatedAtUtc = now
+                var evidenceList = current.Evidence.ToList();
+                evidenceList.Add(evidence);
+                return current with
+                {
+                    Evidence = evidenceList,
+                    UpdatedAtUtc = now
+                };
             });
         }
 
         if (!string.IsNullOrWhiteSpace(options.SessionId))
         {
             var session = await RequireAgentSession(store, options.SessionId);
-            var evidenceList = session.Evidence.ToList();
-            evidenceList.Add(evidence);
-            await store.SaveAgentSessionAsync(session with
+            EnsureMissionOwnsSession(mission, session);
+            await store.UpdateAgentSessionAsync(session.Id, current =>
             {
-                Evidence = evidenceList,
-                UpdatedAtUtc = now
+                var evidenceList = current.Evidence.ToList();
+                evidenceList.Add(evidence);
+                return current with
+                {
+                    Evidence = evidenceList,
+                    UpdatedAtUtc = now
+                };
             });
         }
 
         if (string.IsNullOrWhiteSpace(options.StreamId) && string.IsNullOrWhiteSpace(options.SessionId))
         {
-            var evidenceList = mission.Evidence.ToList();
-            evidenceList.Add(evidence);
-            await store.SaveMissionAsync(mission with
+            await store.UpdateMissionAsync(mission.Id, current =>
             {
-                Evidence = evidenceList,
-                UpdatedAtUtc = now
+                var evidenceList = current.Evidence.ToList();
+                evidenceList.Add(evidence);
+                return current with
+                {
+                    Evidence = evidenceList,
+                    UpdatedAtUtc = now
+                };
             });
         }
 
         WriteJson(JsonSerializer.SerializeToNode(evidence, JsonOptions));
+        return 0;
+    }
+
+    private static async Task<int> WorkMapEvidenceRemove(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var evidenceId = Require(options.EvidenceId, "--evidence-id");
+        var mission = await RequireMission(store, options.MissionId);
+
+        if (!string.IsNullOrWhiteSpace(options.StreamId))
+        {
+            var workstream = await RequireWorkstream(store, options.StreamId);
+            EnsureMissionOwnsWorkstream(mission, workstream);
+            var updated = await store.UpdateWorkstreamAsync(workstream.Id, current => current with
+            {
+                Evidence = current.Evidence
+                    .Where(evidence => !string.Equals(evidence.Id, evidenceId, StringComparison.OrdinalIgnoreCase))
+                    .ToList(),
+                UpdatedAtUtc = now
+            });
+            WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+            return 0;
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.SessionId))
+        {
+            var session = await RequireAgentSession(store, options.SessionId);
+            EnsureMissionOwnsSession(mission, session);
+            var updated = await store.UpdateAgentSessionAsync(session.Id, current => current with
+            {
+                Evidence = current.Evidence
+                    .Where(evidence => !string.Equals(evidence.Id, evidenceId, StringComparison.OrdinalIgnoreCase))
+                    .ToList(),
+                UpdatedAtUtc = now
+            });
+            WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+            return 0;
+        }
+
+        var updatedMission = await store.UpdateMissionAsync(mission.Id, current => current with
+        {
+            Evidence = current.Evidence
+                .Where(evidence => !string.Equals(evidence.Id, evidenceId, StringComparison.OrdinalIgnoreCase))
+                .ToList(),
+            UpdatedAtUtc = now
+        });
+        WriteJson(JsonSerializer.SerializeToNode(updatedMission, JsonOptions));
         return 0;
     }
 
@@ -445,32 +874,98 @@ internal static partial class Program
         DateTimeOffset now,
         string eventSummary)
     {
-        var missionSessions = mission.SessionIds.ToList();
-        AddUnique(missionSessions, session.Id);
-        var workstreamSessions = workstream.SessionIds.ToList();
-        AddUnique(workstreamSessions, session.Id);
-        var events = mission.Events.ToList();
-        events.Add(new WorkMapEventRecord
-        {
-            AtUtc = now,
-            Type = "sessionAttached",
-            Summary = eventSummary
-        });
-
         await store.SaveAgentSessionAsync(session);
-        await store.SaveWorkstreamAsync(workstream with
+        await store.UpdateWorkstreamAsync(workstream.Id, current =>
         {
-            SessionIds = workstreamSessions,
-            Status = session.Status is "handoff" or "blocked" ? session.Status : workstream.Status,
-            UpdatedAtUtc = now
+            var workstreamSessions = current.SessionIds.ToList();
+            AddUnique(workstreamSessions, session.Id);
+            return current with
+            {
+                SessionIds = workstreamSessions,
+                Status = session.Status is "handoff" or "blocked" ? session.Status : current.Status,
+                UpdatedAtUtc = now
+            };
         });
-        await store.SaveMissionAsync(mission with
+        await store.UpdateMissionAsync(mission.Id, current =>
         {
-            SessionIds = missionSessions,
-            Events = events,
-            Status = mission.Status == "planned" ? "in-progress" : mission.Status,
-            UpdatedAtUtc = now
+            var missionSessions = current.SessionIds.ToList();
+            AddUnique(missionSessions, session.Id);
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "sessionAttached",
+                Summary = eventSummary
+            });
+
+            return current with
+            {
+                SessionIds = missionSessions,
+                Events = events,
+                Status = current.Status == "planned" ? "in-progress" : current.Status,
+                UpdatedAtUtc = now
+            };
         });
+    }
+
+    private static async Task UpdateSessionParents(
+        IWorkMapStore store,
+        WorkMapAgentSessionRecord session,
+        DateTimeOffset now,
+        string eventType,
+        string summary)
+    {
+        if (!string.IsNullOrWhiteSpace(session.WorkstreamId))
+        {
+            try
+            {
+                await store.UpdateWorkstreamAsync(session.WorkstreamId, current =>
+                {
+                    var sessionIds = current.SessionIds.ToList();
+                    AddUnique(sessionIds, session.Id);
+                    return current with
+                    {
+                        SessionIds = sessionIds,
+                        Status = session.Status is "handoff" or "blocked" ? session.Status : current.Status,
+                        UpdatedAtUtc = now
+                    };
+                });
+            }
+            catch (ArgumentException)
+            {
+                // A session can outlive a manually removed workstream; keep the session update useful.
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.MissionId))
+        {
+            try
+            {
+                await store.UpdateMissionAsync(session.MissionId, current =>
+                {
+                    var sessionIds = current.SessionIds.ToList();
+                    AddUnique(sessionIds, session.Id);
+                    var events = current.Events.ToList();
+                    events.Add(new WorkMapEventRecord
+                    {
+                        AtUtc = now,
+                        Type = eventType,
+                        Summary = summary
+                    });
+
+                    return current with
+                    {
+                        SessionIds = sessionIds,
+                        Events = events,
+                        UpdatedAtUtc = now
+                    };
+                });
+            }
+            catch (ArgumentException)
+            {
+                // A linked/manual session record should still accept handoffs and blockers.
+            }
+        }
     }
 
     private static async Task<WorkMapMissionRecord> RequireMission(IWorkMapStore store, string? missionId)
@@ -499,6 +994,14 @@ internal static partial class Program
         if (!string.Equals(workstream.MissionId, mission.Id, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"Workstream '{workstream.Id}' belongs to mission '{workstream.MissionId}', not '{mission.Id}'.");
+        }
+    }
+
+    private static void EnsureMissionOwnsSession(WorkMapMissionRecord mission, WorkMapAgentSessionRecord session)
+    {
+        if (!string.Equals(session.MissionId, mission.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"Session '{session.Id}' belongs to mission '{session.MissionId}', not '{mission.Id}'.");
         }
     }
 
@@ -569,13 +1072,29 @@ internal static partial class Program
         builder.AppendLine();
         builder.AppendLine("## Sessions");
         builder.AppendLine();
-        builder.AppendLine("| Session | Display | Backend | Model | Status | Handoff |");
-        builder.AppendLine("|---------|---------|---------|-------|--------|---------|");
+        builder.AppendLine("| Session | Display | Backend | Model | Status | Messages | Observations | Verification | Handoff |");
+        builder.AppendLine("|---------|---------|---------|-------|--------|----------|--------------|--------------|---------|");
         foreach (var session in bundle.Sessions)
         {
             var handoff = session.FinalHandoff?.Text is null ? "" : FirstLine(session.FinalHandoff.Text);
             builder.AppendLine(
-                $"| `{session.Id}` | {EscapePipe(session.DisplayName)} | {EscapePipe(session.Backend)} | {EscapePipe(session.Model)} | {EscapePipe(session.Status)} | {EscapePipe(handoff)} |");
+                $"| `{session.Id}` | {EscapePipe(session.DisplayName)} | {EscapePipe(session.Backend)} | {EscapePipe(session.Model)} | {EscapePipe(session.Status)} | {session.Messages.Count} | {session.StatusObservations.Count} | {session.Verification.Count} | {EscapePipe(handoff)} |");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("## Mission Evidence");
+        builder.AppendLine();
+        foreach (var evidence in bundle.Mission.Evidence)
+        {
+            builder.AppendLine($"- `{evidence.Id}` {evidence.Kind}: {evidence.Summary}");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("## Timeline");
+        builder.AppendLine();
+        foreach (var item in bundle.Mission.Events.OrderBy(item => item.AtUtc))
+        {
+            builder.AppendLine($"- {item.AtUtc:u} `{item.Type}` {item.Summary}");
         }
 
         return builder.ToString();
@@ -587,10 +1106,11 @@ internal static partial class Program
         builder.AppendLine("<!doctype html>");
         builder.AppendLine("<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
         builder.AppendLine($"<title>{Html(bundle.Mission.Title)} - Work Map</title>");
-        builder.AppendLine("<style>body{font-family:system-ui,sans-serif;margin:32px;line-height:1.4;color:#17202a;background:#f7f8fb}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card{background:white;border:1px solid #d8dee9;border-radius:8px;padding:16px}.meta{color:#596579;font-size:13px}.status{font-weight:700}</style></head><body>");
+        builder.AppendLine("<style>body{font-family:system-ui,sans-serif;margin:32px;line-height:1.4;color:#17202a;background:#f7f8fb}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.card{background:white;border:1px solid #d8dee9;border-radius:8px;padding:16px}.meta{color:#596579;font-size:13px}.status{font-weight:700}.pill{display:inline-block;border:1px solid #cbd5e1;border-radius:999px;padding:2px 8px;margin:2px;font-size:12px;background:#f8fafc}.timeline{border-left:2px solid #d8dee9;padding-left:14px}.event{margin:0 0 10px}.excerpt{white-space:pre-wrap;max-height:11em;overflow:auto;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:8px;font-size:13px}</style></head><body>");
         builder.AppendLine($"<h1>{Html(bundle.Mission.Title)}</h1>");
         builder.AppendLine($"<p class=\"meta\">Mission {Html(bundle.Mission.Id)} · {Html(bundle.Mission.Status)}</p>");
         if (!string.IsNullOrWhiteSpace(bundle.Mission.Intent)) builder.AppendLine($"<p>{Html(bundle.Mission.Intent)}</p>");
+        if (!string.IsNullOrWhiteSpace(bundle.Mission.NextAction)) builder.AppendLine($"<p><strong>Next:</strong> {Html(bundle.Mission.NextAction)}</p>");
         builder.AppendLine("<h2>Agent Sessions</h2><div class=\"grid\">");
         foreach (var session in bundle.Sessions)
         {
@@ -600,7 +1120,23 @@ internal static partial class Program
             builder.AppendLine($"<p class=\"status\">{Html(session.Status)}</p>");
             if (session.FinalHandoff is not null) builder.AppendLine($"<p>{Html(FirstLine(session.FinalHandoff.Text))}</p>");
             if (session.Blocker is not null) builder.AppendLine($"<p><strong>Blocker:</strong> {Html(session.Blocker.Summary)}</p>");
-            builder.AppendLine($"<p class=\"meta\">Evidence: {session.Evidence.Count} · Events: {session.Events.Count}</p>");
+            builder.AppendLine($"<p class=\"meta\">Evidence: {session.Evidence.Count} · Events: {session.Events.Count} · Messages: {session.Messages.Count} · Checks: {session.Verification.Count}</p>");
+            if (session.StatusObservations.Count > 0)
+            {
+                var latest = session.StatusObservations.OrderBy(item => item.AtUtc).Last();
+                builder.AppendLine($"<p><span class=\"pill\">{Html(latest.EffectiveStatus)}</span><span class=\"pill\">messages {latest.MessageCount}</span></p>");
+            }
+
+            foreach (var verification in session.Verification.TakeLast(3))
+            {
+                builder.AppendLine($"<p class=\"meta\">{Html(verification.Kind)}: {Html(verification.Result)} {Html(verification.Summary)}</p>");
+            }
+
+            foreach (var message in session.Messages.TakeLast(2))
+            {
+                builder.AppendLine($"<div class=\"excerpt\"><strong>{Html(message.Role)}</strong>: {Html(message.Text)}</div>");
+            }
+
             builder.AppendLine("</section>");
         }
 
@@ -615,7 +1151,25 @@ internal static partial class Program
             builder.AppendLine("</section>");
         }
 
-        builder.AppendLine("</div></body></html>");
+        builder.AppendLine("</div><h2>Mission Evidence</h2><div class=\"grid\">");
+        foreach (var evidence in bundle.Mission.Evidence)
+        {
+            builder.AppendLine("<section class=\"card\">");
+            builder.AppendLine($"<h3>{Html(evidence.Kind)}</h3>");
+            builder.AppendLine($"<p class=\"meta\">{Html(evidence.Id)} · {evidence.AddedAtUtc:u}</p>");
+            if (!string.IsNullOrWhiteSpace(evidence.Path)) builder.AppendLine($"<p><code>{Html(evidence.Path)}</code></p>");
+            if (!string.IsNullOrWhiteSpace(evidence.Summary)) builder.AppendLine($"<p>{Html(evidence.Summary)}</p>");
+            builder.AppendLine("</section>");
+        }
+
+        builder.AppendLine("</div><h2>Status Timeline</h2><div class=\"card timeline\">");
+        foreach (var item in bundle.Mission.Events.OrderBy(item => item.AtUtc))
+        {
+            builder.AppendLine($"<p class=\"event\"><span class=\"meta\">{item.AtUtc:u}</span><br><strong>{Html(item.Type)}</strong> {Html(item.Summary)}</p>");
+        }
+
+        builder.AppendLine("</div>");
+        builder.AppendLine("</body></html>");
         return builder.ToString();
     }
 
@@ -671,6 +1225,102 @@ internal static partial class Program
         builder.AppendLine();
         builder.AppendLine("- The assigned clone/session is unavailable, instructions conflict, a required permission or secret is missing, or continuing would risk corrupting unrelated work.");
         return builder.ToString();
+    }
+
+    private static List<WorkMapMessageRecord> ToWorkMapMessages(IReadOnlyList<BackendMessage> messages)
+    {
+        var records = new List<WorkMapMessageRecord>();
+        for (var index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            records.Add(new WorkMapMessageRecord
+            {
+                Id = string.IsNullOrWhiteSpace(message.Id) ? $"message-{index:D6}" : message.Id,
+                Role = message.Role,
+                Text = Truncate(message.Text, 4_000),
+                PartId = message.PartId,
+                Timestamp = message.Timestamp,
+                Sequence = index,
+                IsExcerpt = message.Text.Length > 4_000
+            });
+        }
+
+        return records;
+    }
+
+    private static List<WorkMapMessageRecord> MergeWorkMapMessages(
+        IReadOnlyList<WorkMapMessageRecord> existing,
+        IReadOnlyList<WorkMapMessageRecord> incoming)
+    {
+        var merged = existing.ToList();
+        var seen = new HashSet<string>(merged.Select(MessageKey), StringComparer.Ordinal);
+        foreach (var message in incoming)
+        {
+            if (seen.Add(MessageKey(message)))
+            {
+                merged.Add(message with { Sequence = merged.Count });
+            }
+        }
+
+        return merged;
+    }
+
+    private static List<WorkMapMessageRecord> EnsurePromptMessage(
+        string prompt,
+        DateTimeOffset atUtc,
+        List<WorkMapMessageRecord> messages)
+    {
+        if (messages.Any(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase)))
+        {
+            return messages;
+        }
+
+        var result = new List<WorkMapMessageRecord>
+        {
+            new()
+            {
+                Id = $"prompt-{atUtc.ToUnixTimeMilliseconds()}",
+                Role = "user",
+                Text = Truncate(prompt, 4_000),
+                Timestamp = atUtc,
+                Sequence = 0,
+                IsExcerpt = prompt.Length > 4_000
+            }
+        };
+        result.AddRange(messages.Select((message, index) => message with { Sequence = index + 1 }));
+        return result;
+    }
+
+    private static WorkMapStatusObservationRecord ToWorkMapStatusObservation(SessionStateSnapshot state, DateTimeOffset atUtc) =>
+        new()
+        {
+            AtUtc = atUtc,
+            ApiStatus = state.ApiStatus,
+            EffectiveStatus = state.EffectiveStatus,
+            DerivedStatus = state.DerivedStatus,
+            MessageCount = state.MessageCount,
+            LatestUserMessageId = state.LatestUserMessageId,
+            LatestAssistantMessageId = state.LatestAssistantMessageId,
+            HasFreshSummary = state.HasFreshSummary
+        };
+
+    private static string MessageKey(WorkMapMessageRecord message) =>
+        $"{message.Id}\u001f{message.PartId}\u001f{message.Role}";
+
+    private static string Truncate(string text, int maxLength) =>
+        text.Length <= maxLength ? text : text[..maxLength] + "\n[truncated]";
+
+    private static async Task<string> ReadTextOption(WorkMapArgs options, string required)
+    {
+        if (!string.IsNullOrWhiteSpace(options.Summary)) return options.Summary;
+        if (!string.IsNullOrWhiteSpace(options.File))
+        {
+            if (!File.Exists(options.File)) throw new ArgumentException($"--file not found: {options.File}");
+            var text = await File.ReadAllTextAsync(options.File);
+            if (!string.IsNullOrWhiteSpace(text)) return text;
+        }
+
+        return Require(null, required);
     }
 
     private static async Task WriteWorkMapOutput(string text, WorkMapArgs options)
@@ -799,6 +1449,14 @@ internal static partial class Program
 
         public string? Summary { get; private set; }
 
+        public string? File { get; private set; }
+
+        public string? EvidenceText { get; private set; }
+
+        public string? EvidenceId { get; private set; }
+
+        public string? Result { get; private set; }
+
         public List<string> DependsOn { get; } = [];
 
         public bool Async { get; private set; }
@@ -809,9 +1467,15 @@ internal static partial class Program
 
         public bool NoReply { get; private set; }
 
+        public bool All { get; private set; }
+
+        public bool Force { get; private set; }
+
         public int TimeoutSeconds { get; private set; } = 300;
 
         public bool TimeoutWasProvided { get; private set; }
+
+        public int MessageLimit { get; private set; } = 50;
 
         public string SummaryMarker { get; private set; } = "FINAL HANDOFF";
 
@@ -860,11 +1524,20 @@ internal static partial class Program
                     case "--kind": parsed.Kind = Value(queue, arg); break;
                     case "--path": parsed.Path = Value(queue, arg); break;
                     case "--summary": parsed.Summary = Value(queue, arg); break;
+                    case "--file": parsed.File = Value(queue, arg); break;
+                    case "--evidence": parsed.EvidenceText = Value(queue, arg); break;
+                    case "--evidence-id": parsed.EvidenceId = Value(queue, arg); break;
+                    case "--result": parsed.Result = Value(queue, arg); break;
                     case "--summary-marker": parsed.SummaryMarker = Value(queue, arg); break;
                     case "--async": parsed.Async = true; break;
                     case "--wait": parsed.Wait = true; break;
                     case "--raw": parsed.Raw = true; break;
                     case "--no-reply": parsed.NoReply = true; break;
+                    case "--all": parsed.All = true; break;
+                    case "--force": parsed.Force = true; break;
+                    case "--message-limit":
+                        parsed.MessageLimit = PositiveInt(Value(queue, arg), arg);
+                        break;
                     case "--timeout":
                         parsed.TimeoutSeconds = PositiveInt(Value(queue, arg), arg);
                         parsed.TimeoutWasProvided = true;
