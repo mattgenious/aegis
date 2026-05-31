@@ -27,6 +27,12 @@ internal static partial class Program
             ["list", ..] => await WorkMapList(store, options),
             ["show", ..] => await WorkMapShow(store, options),
             ["brief", ..] => await WorkMapBrief(store, options),
+            ["launch", ..] => await WorkMapLaunch(store, options),
+            ["supervise", ..] => await WorkMapSupervise(store, options),
+            ["serve", ..] => await WorkMapServe(store, options),
+            ["store", "info", ..] => await WorkMapStoreInfo(store),
+            ["store", "export", ..] => await WorkMapStoreExport(store, options),
+            ["store", "import", ..] => await WorkMapStoreImport(store, options),
             ["mission", "update", ..] => await WorkMapMissionUpdate(store, options),
             ["stream", "add", ..] => await WorkMapStreamAdd(store, options),
             ["stream", "update", ..] => await WorkMapStreamUpdate(store, options),
@@ -329,7 +335,6 @@ internal static partial class Program
 
     private static async Task<int> WorkMapSessionRun(IWorkMapStore store, WorkMapArgs options)
     {
-        var now = DateTimeOffset.UtcNow;
         var mission = await RequireMission(store, options.MissionId);
         var workstream = await RequireWorkstream(store, options.StreamId);
         EnsureMissionOwnsWorkstream(mission, workstream);
@@ -340,15 +345,51 @@ internal static partial class Program
             return Fail("Prompt is required. Use --prompt or --prompt-file.");
         }
 
+        var outcome = await RunWorkMapSession(store, mission, workstream, options, prompt, options.Async, options.Wait);
+        if (outcome.Blocker is not null)
+        {
+            return Fail(outcome.Blocker.Evidence is null
+                ? outcome.Blocker.Summary
+                : $"{outcome.Blocker.Summary}: {outcome.Blocker.Evidence}");
+        }
+
+        WriteJson(new JsonObject
+        {
+            ["missionID"] = mission.Id,
+            ["workstreamID"] = workstream.Id,
+            ["sessionID"] = outcome.Session.Id,
+            ["displayName"] = outcome.Session.DisplayName,
+            ["backend"] = outcome.Session.Backend,
+            ["status"] = outcome.Session.Status,
+            ["summary"] = outcome.Session.FinalHandoff?.Text
+        });
+        return 0;
+    }
+
+    private static async Task<WorkMapSessionRunOutcome> RunWorkMapSession(
+        IWorkMapStore store,
+        WorkMapMissionRecord mission,
+        WorkMapWorkstreamRecord workstream,
+        WorkMapArgs options,
+        string prompt,
+        bool async,
+        bool wait)
+    {
+        var now = DateTimeOffset.UtcNow;
         var resolved = ResolveWorkMapProfile(options);
         using var http = CreateHttpClient(options.Server ?? DefaultServer);
         var client = new OpenCodeClient(http);
         var backend = CreateBackend(resolved.Backend, client);
         var commands = new BackendCommandService(backend, new SessionRegistryService(new FileSessionRegistry()));
         var directory = NormalizeOptionalPath(options.Directory) ?? workstream.ClonePath;
+        var sourceKind = !string.IsNullOrWhiteSpace(options.PromptFile)
+            ? PromptSourceKind.File
+            : Console.IsInputRedirected && string.IsNullOrWhiteSpace(options.Prompt)
+                ? PromptSourceKind.Stdin
+                : PromptSourceKind.Inline;
         var request = new PromptRequest(
             Text: prompt,
-            SourceKind: !string.IsNullOrWhiteSpace(options.PromptFile) ? PromptSourceKind.File : PromptSourceKind.Inline,
+            SourceKind: sourceKind,
             SourceLocation: options.PromptFile,
             ModelProvider: resolved.ModelProvider,
             Model: resolved.Model,
@@ -366,8 +407,8 @@ internal static partial class Program
             ParentSessionId: null,
             Directory: directory,
             Prompt: request,
-            Async: options.Async,
-            Wait: options.Wait,
+            Async: async,
+            Wait: wait,
             Timeout: TimeSpan.FromSeconds(options.TimeoutSeconds)));
 
         var states = await commands.GetStatusAsync(result.Session.SessionId);
@@ -389,7 +430,7 @@ internal static partial class Program
         var status = summary is not null
             ? "handoff"
             : state?.EffectiveStatus
-              ?? (options.Async && !options.Wait ? "queued" : "waiting");
+              ?? (async && !wait ? "queued" : "waiting");
         WorkMapBlockerRecord? blocker = null;
         if (!result.PostResult.IsSuccess)
         {
@@ -453,22 +494,7 @@ internal static partial class Program
 
         await SaveSessionAttachment(store, mission, workstream, session, DateTimeOffset.UtcNow, "Session run recorded.");
 
-        if (blocker is not null)
-        {
-            return Fail(blocker.Evidence is null ? blocker.Summary : $"{blocker.Summary}: {blocker.Evidence}");
-        }
-
-        WriteJson(new JsonObject
-        {
-            ["missionID"] = mission.Id,
-            ["workstreamID"] = workstream.Id,
-            ["sessionID"] = session.Id,
-            ["displayName"] = session.DisplayName,
-            ["backend"] = session.Backend,
-            ["status"] = session.Status,
-            ["summary"] = session.FinalHandoff?.Text
-        });
-        return 0;
+        return new WorkMapSessionRunOutcome(session, blocker);
     }
 
     private static async Task<int> WorkMapSessionSync(IWorkMapStore store, WorkMapArgs options)
@@ -538,11 +564,10 @@ internal static partial class Program
         var backendKind = ParseBackend(session.Backend);
         using var http = CreateHttpClient(options.Server ?? DefaultServer);
         var backend = CreateBackend(backendKind, new OpenCodeClient(http));
-        var commands = new BackendCommandService(backend, new SessionRegistryService(new FileSessionRegistry()));
-        var states = await commands.GetStatusAsync(session.Id);
-        var state = states.FirstOrDefault();
-        var summary = await commands.GetLastSummaryAsync(session.Id, options.SummaryMarker);
-        var messages = await commands.GetMessagesAsync(session.Id, options.MessageLimit);
+        var backendSession = ToBackendSessionRecord(session, backendKind);
+        var state = await backend.GetSessionStateAsync(backendSession);
+        var summary = await backend.ExtractSummaryAsync(backendSession, options.SummaryMarker);
+        var messages = await backend.GetMessagesAsync(backendSession, options.MessageLimit);
         var incomingMessages = ToWorkMapMessages(messages);
 
         var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
@@ -577,6 +602,19 @@ internal static partial class Program
         });
         await UpdateSessionParents(store, updated, now, "sessionSynced", state is null ? "No status snapshot returned." : $"Status observed as {state.EffectiveStatus}.");
         return updated;
+    }
+
+    private static SessionRecord ToBackendSessionRecord(WorkMapAgentSessionRecord session, BackendKind backendKind)
+    {
+        var backendSessionId = string.IsNullOrWhiteSpace(session.BackendSessionId)
+            ? session.Id
+            : session.BackendSessionId;
+        return new SessionRecord(
+            SessionId: session.Id,
+            Backend: backendKind,
+            BackendSessionId: backendSessionId,
+            CreatedAtUtc: session.CreatedAtUtc,
+            Directory: NormalizeOptionalPath(session.Directory));
     }
 
     private static async Task<int> WorkMapSessionUpdate(IWorkMapStore store, WorkMapArgs options)
@@ -866,6 +904,298 @@ internal static partial class Program
         return 0;
     }
 
+    private static async Task<int> WorkMapLaunch(IWorkMapStore store, WorkMapArgs options)
+    {
+        var mission = await RequireMission(store, options.MissionId);
+        var result = await LaunchWorkMapMission(store, mission, options);
+        WriteJson(ToLaunchJson(result));
+        return result.FailureCount == 0 ? 0 : 1;
+    }
+
+    private static async Task<WorkMapLaunchResult> LaunchWorkMapMission(
+        IWorkMapStore store,
+        WorkMapMissionRecord mission,
+        WorkMapArgs options)
+    {
+        var resolved = ResolveWorkMapProfile(options);
+        var extraPrompt = await ReadWorkMapPrompt(options);
+        var workstreams = OrderWorkstreams(mission, await store.GetWorkstreamsAsync(mission.Id));
+        var sessions = (await store.GetAgentSessionsAsync(mission.Id)).ToList();
+        var launched = new JsonArray();
+        var skipped = new JsonArray();
+        var eligibleCount = 0;
+        var failureCount = 0;
+
+        foreach (var workstream in workstreams)
+        {
+            var streamSessions = SessionsForWorkstream(workstream, sessions);
+            var existingSessionCount = streamSessions.Count + workstream.SessionIds
+                .Count(id => streamSessions.All(session => !string.Equals(session.Id, id, StringComparison.OrdinalIgnoreCase)));
+
+            if (!options.IncludeComplete && IsCompleteStatus(workstream.Status))
+            {
+                skipped.Add(LaunchSkip(workstream, "complete"));
+                continue;
+            }
+
+            if (!options.Force && existingSessionCount > 0)
+            {
+                skipped.Add(LaunchSkip(workstream, "session-exists"));
+                continue;
+            }
+
+            eligibleCount++;
+            var directory = NormalizeOptionalPath(options.Directory) ?? workstream.ClonePath;
+            if (options.DryRun)
+            {
+                launched.Add(new JsonObject
+                {
+                    ["workstreamID"] = workstream.Id,
+                    ["name"] = workstream.Name,
+                    ["backend"] = resolved.Backend.ToOptionValue(),
+                    ["directory"] = directory,
+                    ["status"] = "planned"
+                });
+                continue;
+            }
+
+            try
+            {
+                var prompt = BuildLaunchPrompt(mission, workstream, streamSessions, extraPrompt);
+                var outcome = await RunWorkMapSession(store, mission, workstream, options, prompt, async: true, wait: options.Wait);
+                sessions.Add(outcome.Session);
+                if (outcome.Blocker is not null)
+                {
+                    failureCount++;
+                }
+
+                launched.Add(new JsonObject
+                {
+                    ["workstreamID"] = workstream.Id,
+                    ["name"] = workstream.Name,
+                    ["sessionID"] = outcome.Session.Id,
+                    ["backend"] = outcome.Session.Backend,
+                    ["directory"] = outcome.Session.Directory,
+                    ["status"] = outcome.Session.Status,
+                    ["summary"] = outcome.Session.FinalHandoff?.Text,
+                    ["error"] = outcome.Blocker?.Evidence ?? outcome.Blocker?.Summary
+                });
+            }
+            catch (Exception ex)
+            {
+                failureCount++;
+                launched.Add(new JsonObject
+                {
+                    ["workstreamID"] = workstream.Id,
+                    ["name"] = workstream.Name,
+                    ["backend"] = resolved.Backend.ToOptionValue(),
+                    ["directory"] = directory,
+                    ["status"] = "launch-failed",
+                    ["error"] = ex.Message
+                });
+            }
+        }
+
+        return new WorkMapLaunchResult(
+            mission.Id,
+            resolved.Backend.ToOptionValue(),
+            options.DryRun,
+            eligibleCount,
+            launched.Count,
+            skipped.Count,
+            failureCount,
+            launched,
+            skipped);
+    }
+
+    private static async Task<int> WorkMapSupervise(IWorkMapStore store, WorkMapArgs options)
+    {
+        var mission = await RequireMission(store, options.MissionId);
+        var started = DateTimeOffset.UtcNow;
+        var deadline = options.MaxDurationMinutes is null
+            ? (DateTimeOffset?)null
+            : started.AddMinutes(options.MaxDurationMinutes.Value);
+        var repeatRequested = options.UntilIdle || options.MaxRuns is not null || options.MaxDurationMinutes is not null;
+        var maxRuns = options.MaxRuns ?? (repeatRequested ? int.MaxValue : 1);
+        var runs = new JsonArray();
+        WorkMapSupervisionCounts finalCounts = new(0, 0, 0, 0);
+
+        for (var run = 1; run <= maxRuns; run++)
+        {
+            JsonObject? launchMissing = null;
+            if (options.LaunchMissing)
+            {
+                launchMissing = ToLaunchJson(await LaunchWorkMapMission(store, mission, options));
+            }
+
+            var sessions = (await store.GetAgentSessionsAsync(mission.Id)).ToList();
+            var synced = new List<WorkMapAgentSessionRecord>();
+            var syncErrors = new JsonArray();
+
+            foreach (var session in sessions)
+            {
+                if (options.DryRun)
+                {
+                    synced.Add(session);
+                    continue;
+                }
+
+                try
+                {
+                    synced.Add(await SyncWorkMapSession(store, session, options));
+                }
+                catch (Exception ex)
+                {
+                    syncErrors.Add(new JsonObject
+                    {
+                        ["sessionID"] = session.Id,
+                        ["error"] = ex.Message
+                    });
+                    synced.Add(await MarkWorkMapSessionSyncFailed(store, session, ex.Message));
+                }
+            }
+
+            finalCounts = CountSupervisionStatuses(synced);
+            var runResult = new JsonObject
+            {
+                ["run"] = run,
+                ["atUtc"] = DateTimeOffset.UtcNow.ToString("O"),
+                ["quiet"] = finalCounts.Quiet,
+                ["active"] = finalCounts.Active,
+                ["blocked"] = finalCounts.Blocked,
+                ["handoff"] = finalCounts.Handoff,
+                ["sessions"] = BuildSupervisionSessionsJson(synced),
+                ["syncErrors"] = syncErrors
+            };
+            if (launchMissing is not null)
+            {
+                runResult["launchMissing"] = launchMissing;
+            }
+
+            runs.Add(runResult);
+
+            if (!repeatRequested) break;
+            if (options.UntilIdle && finalCounts.Active == 0) break;
+            if (run >= maxRuns) break;
+            if (deadline is not null && DateTimeOffset.UtcNow >= deadline.Value) break;
+
+            var delay = TimeSpan.FromSeconds(options.IntervalSeconds);
+            if (deadline is not null)
+            {
+                var remaining = deadline.Value - DateTimeOffset.UtcNow;
+                if (remaining <= TimeSpan.Zero) break;
+                if (delay > remaining) delay = remaining;
+            }
+
+            await Task.Delay(delay);
+        }
+
+        WriteJson(new JsonObject
+        {
+            ["missionID"] = mission.Id,
+            ["quiet"] = finalCounts.Quiet,
+            ["active"] = finalCounts.Active,
+            ["blocked"] = finalCounts.Blocked,
+            ["handoff"] = finalCounts.Handoff,
+            ["runs"] = runs
+        });
+        return 0;
+    }
+
+    private static async Task<int> WorkMapStoreInfo(IWorkMapStore store)
+    {
+        var missions = await store.GetMissionsAsync();
+        var workstreams = await store.GetWorkstreamsAsync();
+        var sessions = await store.GetAgentSessionsAsync();
+        var directory = (store as FileWorkMapStore)?.DirectoryPath;
+        var exists = directory is not null && Directory.Exists(directory);
+
+        WriteJson(new JsonObject
+        {
+            ["provider"] = "json-directory",
+            ["directory"] = directory,
+            ["exists"] = exists,
+            ["missions"] = missions.Count,
+            ["workstreams"] = workstreams.Count,
+            ["sessions"] = sessions.Count,
+            ["jsonFiles"] = exists ? CountJsonFiles(directory!) : 0,
+            ["bytes"] = exists ? SumFileBytes(directory!) : 0
+        });
+        return 0;
+    }
+
+    private static async Task<int> WorkMapStoreExport(IWorkMapStore store, WorkMapArgs options)
+    {
+        var snapshot = new WorkMapStoreSnapshot
+        {
+            ExportedAtUtc = DateTimeOffset.UtcNow,
+            Missions = (await store.GetMissionsAsync()).OrderBy(item => item.Id, StringComparer.OrdinalIgnoreCase).ToList(),
+            Workstreams = (await store.GetWorkstreamsAsync()).OrderBy(item => item.Id, StringComparer.OrdinalIgnoreCase).ToList(),
+            Sessions = (await store.GetAgentSessionsAsync()).OrderBy(item => item.Id, StringComparer.OrdinalIgnoreCase).ToList()
+        };
+        var json = JsonSerializer.Serialize(snapshot, JsonOptions);
+        await WriteWorkMapOutput(json + Environment.NewLine, options);
+        return 0;
+    }
+
+    private static async Task<int> WorkMapStoreImport(IWorkMapStore store, WorkMapArgs options)
+    {
+        var snapshot = await ReadWorkMapSnapshot(options);
+        var conflicts = await FindSnapshotConflicts(store, snapshot);
+        if (conflicts.Count > 0 && !options.Force)
+        {
+            WriteJson(new JsonObject
+            {
+                ["imported"] = false,
+                ["conflicts"] = conflicts,
+                ["message"] = "Snapshot contains records that already exist. Pass --force to overwrite them."
+            });
+            return 1;
+        }
+
+        if (options.DryRun)
+        {
+            WriteJson(new JsonObject
+            {
+                ["imported"] = false,
+                ["dryRun"] = true,
+                ["missions"] = snapshot.Missions.Count,
+                ["workstreams"] = snapshot.Workstreams.Count,
+                ["sessions"] = snapshot.Sessions.Count,
+                ["conflicts"] = conflicts
+            });
+            return 0;
+        }
+
+        foreach (var mission in snapshot.Missions)
+        {
+            ValidateRecordId(mission.Id, "mission");
+            await store.SaveMissionAsync(mission);
+        }
+
+        foreach (var workstream in snapshot.Workstreams)
+        {
+            ValidateRecordId(workstream.Id, "workstream");
+            await store.SaveWorkstreamAsync(workstream);
+        }
+
+        foreach (var session in snapshot.Sessions)
+        {
+            ValidateRecordId(session.Id, "session");
+            await store.SaveAgentSessionAsync(session);
+        }
+
+        WriteJson(new JsonObject
+        {
+            ["imported"] = true,
+            ["missions"] = snapshot.Missions.Count,
+            ["workstreams"] = snapshot.Workstreams.Count,
+            ["sessions"] = snapshot.Sessions.Count,
+            ["overwroteExisting"] = conflicts.Count
+        });
+        return 0;
+    }
+
     private static async Task SaveSessionAttachment(
         IWorkMapStore store,
         WorkMapMissionRecord mission,
@@ -882,7 +1212,11 @@ internal static partial class Program
             return current with
             {
                 SessionIds = workstreamSessions,
-                Status = session.Status is "handoff" or "blocked" ? session.Status : current.Status,
+                Status = session.Status is "handoff" or "blocked"
+                    ? session.Status
+                    : current.Status == "planned"
+                        ? session.Status
+                        : current.Status,
                 UpdatedAtUtc = now
             };
         });
@@ -965,6 +1299,297 @@ internal static partial class Program
             {
                 // A linked/manual session record should still accept handoffs and blockers.
             }
+        }
+    }
+
+    private static JsonObject ToLaunchJson(WorkMapLaunchResult result) =>
+        new()
+        {
+            ["missionID"] = result.MissionId,
+            ["backend"] = result.Backend,
+            ["dryRun"] = result.DryRun,
+            ["eligible"] = result.EligibleCount,
+            ["launchedCount"] = result.LaunchedCount,
+            ["skippedCount"] = result.SkippedCount,
+            ["failureCount"] = result.FailureCount,
+            ["launched"] = result.Launched,
+            ["skipped"] = result.Skipped
+        };
+
+    private static JsonObject LaunchSkip(WorkMapWorkstreamRecord workstream, string reason) =>
+        new()
+        {
+            ["workstreamID"] = workstream.Id,
+            ["name"] = workstream.Name,
+            ["status"] = workstream.Status,
+            ["reason"] = reason
+        };
+
+    private static IReadOnlyList<WorkMapWorkstreamRecord> OrderWorkstreams(
+        WorkMapMissionRecord mission,
+        IReadOnlyList<WorkMapWorkstreamRecord> workstreams)
+    {
+        var missionOrder = mission.WorkstreamIds
+            .Select((id, index) => new { id, index })
+            .ToDictionary(item => item.id, item => item.index, StringComparer.OrdinalIgnoreCase);
+
+        return workstreams
+            .OrderBy(item => missionOrder.TryGetValue(item.Id, out var index) ? index : int.MaxValue)
+            .ThenBy(item => item.CreatedAtUtc)
+            .ThenBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static List<WorkMapAgentSessionRecord> SessionsForWorkstream(
+        WorkMapWorkstreamRecord workstream,
+        IReadOnlyList<WorkMapAgentSessionRecord> sessions)
+    {
+        return sessions
+            .Where(session =>
+                string.Equals(session.WorkstreamId, workstream.Id, StringComparison.OrdinalIgnoreCase)
+                || workstream.SessionIds.Contains(session.Id, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private static string BuildLaunchPrompt(
+        WorkMapMissionRecord mission,
+        WorkMapWorkstreamRecord workstream,
+        IReadOnlyList<WorkMapAgentSessionRecord> sessions,
+        string extraPrompt)
+    {
+        var brief = BuildDelegationBrief(mission, workstream, sessions);
+        if (string.IsNullOrWhiteSpace(extraPrompt))
+        {
+            return brief;
+        }
+
+        return brief.TrimEnd() + Environment.NewLine + Environment.NewLine
+               + "## Coordinator Prompt" + Environment.NewLine + Environment.NewLine
+               + extraPrompt.Trim() + Environment.NewLine;
+    }
+
+    private static async Task<WorkMapAgentSessionRecord> MarkWorkMapSessionSyncFailed(
+        IWorkMapStore store,
+        WorkMapAgentSessionRecord session,
+        string error)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
+        {
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "syncFailed",
+                Summary = error
+            });
+
+            return current with
+            {
+                Status = "sync-failed",
+                Events = events,
+                Blocker = new WorkMapBlockerRecord
+                {
+                    AtUtc = now,
+                    Summary = "Session sync failed.",
+                    Evidence = error
+                },
+                UpdatedAtUtc = now
+            };
+        });
+
+        await UpdateSessionParents(store, updated, now, "sessionSyncFailed", error);
+        return updated;
+    }
+
+    private static WorkMapSupervisionCounts CountSupervisionStatuses(IReadOnlyList<WorkMapAgentSessionRecord> sessions)
+    {
+        var quiet = 0;
+        var active = 0;
+        var blocked = 0;
+        var handoff = 0;
+
+        foreach (var session in sessions)
+        {
+            switch (ClassifySupervisionStatus(session))
+            {
+                case "active":
+                    active++;
+                    break;
+                case "blocked":
+                    blocked++;
+                    break;
+                case "handoff":
+                    handoff++;
+                    break;
+                default:
+                    quiet++;
+                    break;
+            }
+        }
+
+        return new WorkMapSupervisionCounts(quiet, active, blocked, handoff);
+    }
+
+    private static JsonArray BuildSupervisionSessionsJson(IReadOnlyList<WorkMapAgentSessionRecord> sessions)
+    {
+        var array = new JsonArray();
+        foreach (var session in sessions.OrderBy(item => item.WorkstreamId, StringComparer.OrdinalIgnoreCase).ThenBy(item => item.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            array.Add(new JsonObject
+            {
+                ["sessionID"] = session.Id,
+                ["workstreamID"] = session.WorkstreamId,
+                ["backend"] = session.Backend,
+                ["status"] = session.Status,
+                ["category"] = ClassifySupervisionStatus(session),
+                ["updatedAtUtc"] = session.UpdatedAtUtc.ToString("O")
+            });
+        }
+
+        return array;
+    }
+
+    private static string ClassifySupervisionStatus(WorkMapAgentSessionRecord session)
+    {
+        if (session.FinalHandoff is not null || IsCompleteStatus(session.Status))
+        {
+            return "handoff";
+        }
+
+        if (IsBlockedStatus(session.Status))
+        {
+            return "blocked";
+        }
+
+        var latestObservation = session.StatusObservations.LastOrDefault();
+        if (latestObservation is not null)
+        {
+            if (IsBlockedStatus(latestObservation.EffectiveStatus)) return "blocked";
+            if (IsActiveStatus(latestObservation.EffectiveStatus)) return "active";
+        }
+
+        return IsActiveStatus(session.Status) ? "active" : "quiet";
+    }
+
+    private static bool IsCompleteStatus(string? status) =>
+        status is not null
+        && (status.Equals("handoff", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("complete", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("completed", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("done", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("verified", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("closed", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsBlockedStatus(string? status) =>
+        !string.IsNullOrWhiteSpace(status)
+        && (status.Contains("blocked", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || status.StartsWith("error", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsActiveStatus(string? status) =>
+        !string.IsNullOrWhiteSpace(status)
+        && (status.Contains("running", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("queued", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("waiting", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("active", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("busy", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("working", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("in-progress", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("pending", StringComparison.OrdinalIgnoreCase));
+
+    private static int CountJsonFiles(string directory) =>
+        Directory.Exists(directory)
+            ? Directory.EnumerateFiles(directory, "*.json", SearchOption.AllDirectories).Count()
+            : 0;
+
+    private static long SumFileBytes(string directory)
+    {
+        if (!Directory.Exists(directory)) return 0;
+        long total = 0;
+        foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.AllDirectories))
+        {
+            total += new FileInfo(file).Length;
+        }
+
+        return total;
+    }
+
+    private static async Task<WorkMapStoreSnapshot> ReadWorkMapSnapshot(WorkMapArgs options)
+    {
+        var raw = !string.IsNullOrWhiteSpace(options.File)
+            ? await File.ReadAllTextAsync(options.File)
+            : Console.IsInputRedirected
+                ? await Console.In.ReadToEndAsync()
+                : throw new ArgumentException("Snapshot input is required. Use --file or pipe JSON to stdin.");
+
+        var snapshot = JsonSerializer.Deserialize<WorkMapStoreSnapshot>(raw, JsonOptions)
+                       ?? throw new ArgumentException("Snapshot JSON did not contain an object.");
+        snapshot = snapshot with
+        {
+            Missions = snapshot.Missions ?? [],
+            Workstreams = snapshot.Workstreams ?? [],
+            Sessions = snapshot.Sessions ?? []
+        };
+
+        if (snapshot.Kind != "workMapSnapshot")
+        {
+            throw new ArgumentException("Snapshot kind must be 'workMapSnapshot'.");
+        }
+
+        foreach (var mission in snapshot.Missions)
+        {
+            ValidateRecordId(mission.Id, "mission");
+        }
+
+        foreach (var workstream in snapshot.Workstreams)
+        {
+            ValidateRecordId(workstream.Id, "workstream");
+        }
+
+        foreach (var session in snapshot.Sessions)
+        {
+            ValidateRecordId(session.Id, "session");
+        }
+
+        return snapshot;
+    }
+
+    private static async Task<JsonArray> FindSnapshotConflicts(IWorkMapStore store, WorkMapStoreSnapshot snapshot)
+    {
+        var conflicts = new JsonArray();
+        foreach (var mission in snapshot.Missions)
+        {
+            if (await store.GetMissionAsync(mission.Id) is not null)
+            {
+                conflicts.Add(new JsonObject { ["kind"] = "mission", ["id"] = mission.Id });
+            }
+        }
+
+        foreach (var workstream in snapshot.Workstreams)
+        {
+            if (await store.GetWorkstreamAsync(workstream.Id) is not null)
+            {
+                conflicts.Add(new JsonObject { ["kind"] = "workstream", ["id"] = workstream.Id });
+            }
+        }
+
+        foreach (var session in snapshot.Sessions)
+        {
+            if (await store.GetAgentSessionAsync(session.Id) is not null)
+            {
+                conflicts.Add(new JsonObject { ["kind"] = "session", ["id"] = session.Id });
+            }
+        }
+
+        return conflicts;
+    }
+
+    private static void ValidateRecordId(string id, string kind)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            throw new ArgumentException($"Snapshot contains a {kind} record without an id.");
         }
     }
 
@@ -1381,6 +2006,27 @@ internal static partial class Program
         IReadOnlyList<WorkMapWorkstreamRecord> Workstreams,
         IReadOnlyList<WorkMapAgentSessionRecord> Sessions);
 
+    private sealed record WorkMapSessionRunOutcome(
+        WorkMapAgentSessionRecord Session,
+        WorkMapBlockerRecord? Blocker);
+
+    private sealed record WorkMapLaunchResult(
+        string MissionId,
+        string Backend,
+        bool DryRun,
+        int EligibleCount,
+        int LaunchedCount,
+        int SkippedCount,
+        int FailureCount,
+        JsonArray Launched,
+        JsonArray Skipped);
+
+    private sealed record WorkMapSupervisionCounts(
+        int Quiet,
+        int Active,
+        int Blocked,
+        int Handoff);
+
     private sealed class WorkMapArgs
     {
         public List<string> Positionals { get; } = [];
@@ -1429,6 +2075,8 @@ internal static partial class Program
 
         public string? Server { get; private set; }
 
+        public string? Host { get; private set; }
+
         public string? Profile { get; private set; }
 
         public string? Prompt { get; private set; }
@@ -1471,11 +2119,27 @@ internal static partial class Program
 
         public bool Force { get; private set; }
 
+        public bool DryRun { get; private set; }
+
+        public bool IncludeComplete { get; private set; }
+
+        public bool UntilIdle { get; private set; }
+
+        public bool LaunchMissing { get; private set; }
+
         public int TimeoutSeconds { get; private set; } = 300;
 
         public bool TimeoutWasProvided { get; private set; }
 
         public int MessageLimit { get; private set; } = 50;
+
+        public int? Port { get; private set; }
+
+        public int IntervalSeconds { get; private set; } = 30;
+
+        public int? MaxRuns { get; private set; }
+
+        public int? MaxDurationMinutes { get; private set; }
 
         public string SummaryMarker { get; private set; } = "FINAL HANDOFF";
 
@@ -1514,6 +2178,8 @@ internal static partial class Program
                     case "--system": parsed.System = Value(queue, arg); break;
                     case "--directory": parsed.Directory = Value(queue, arg); break;
                     case "--server": parsed.Server = Value(queue, arg); break;
+                    case "--host": parsed.Host = Value(queue, arg); break;
+                    case "--hostname": parsed.Host = Value(queue, arg); break;
                     case "--profile": parsed.Profile = Value(queue, arg); break;
                     case "--prompt": parsed.Prompt = Value(queue, arg); break;
                     case "--prompt-file": parsed.PromptFile = Value(queue, arg); break;
@@ -1525,6 +2191,7 @@ internal static partial class Program
                     case "--path": parsed.Path = Value(queue, arg); break;
                     case "--summary": parsed.Summary = Value(queue, arg); break;
                     case "--file": parsed.File = Value(queue, arg); break;
+                    case "--input": parsed.File = Value(queue, arg); break;
                     case "--evidence": parsed.EvidenceText = Value(queue, arg); break;
                     case "--evidence-id": parsed.EvidenceId = Value(queue, arg); break;
                     case "--result": parsed.Result = Value(queue, arg); break;
@@ -1535,8 +2202,24 @@ internal static partial class Program
                     case "--no-reply": parsed.NoReply = true; break;
                     case "--all": parsed.All = true; break;
                     case "--force": parsed.Force = true; break;
+                    case "--dry-run": parsed.DryRun = true; break;
+                    case "--include-complete": parsed.IncludeComplete = true; break;
+                    case "--until-idle": parsed.UntilIdle = true; break;
+                    case "--launch-missing": parsed.LaunchMissing = true; break;
+                    case "--interval-seconds":
+                        parsed.IntervalSeconds = PositiveInt(Value(queue, arg), arg);
+                        break;
+                    case "--max-runs":
+                        parsed.MaxRuns = PositiveInt(Value(queue, arg), arg);
+                        break;
+                    case "--max-duration-minutes":
+                        parsed.MaxDurationMinutes = PositiveInt(Value(queue, arg), arg);
+                        break;
                     case "--message-limit":
                         parsed.MessageLimit = PositiveInt(Value(queue, arg), arg);
+                        break;
+                    case "--port":
+                        parsed.Port = PositiveInt(Value(queue, arg), arg);
                         break;
                     case "--timeout":
                         parsed.TimeoutSeconds = PositiveInt(Value(queue, arg), arg);

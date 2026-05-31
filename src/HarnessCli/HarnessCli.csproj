@@ -15,6 +15,12 @@
     <ProjectReference Include="..\HarnessCli.Core\HarnessCli.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="WorkMapUi\dist\**\*"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <Target Name="WriteLegacyCliAliasShims" AfterTargets="Publish">
     <PropertyGroup>
       <LegacyWindowsShimCommand>&quot;%~dp0harness-cli.exe&quot; %25*</LegacyWindowsShimCommand>

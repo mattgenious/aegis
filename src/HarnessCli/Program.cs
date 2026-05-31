@@ -1817,6 +1817,8 @@ Usage:
   harness-cli export --session ses_... [--format json|md] [--output FILE]
   harness-cli work-map create --title TITLE [--intent TEXT]
   harness-cli work-map stream add --mission ID --name NAME [--clone PATH]
+  harness-cli work-map launch --mission ID [--dry-run]
+  harness-cli work-map supervise --mission ID [--launch-missing] [--until-idle]
   harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md
   harness-cli work-map session sync --mission ID --all
   harness-cli work-map session handoff --session ID --summary TEXT
@@ -1943,6 +1945,12 @@ Usage:
   harness-cli work-map list [--format json|md]
   harness-cli work-map show --mission ID [--format json|md|html] [--output FILE]
   harness-cli work-map brief --mission ID --stream ID [--output FILE]
+  harness-cli work-map launch --mission ID [--dry-run] [--force] [--include-complete] [--wait]
+  harness-cli work-map supervise --mission ID [--launch-missing] [--until-idle] [--max-runs N]
+  harness-cli work-map serve [--host HOST] [--port PORT]
+  harness-cli work-map store info
+  harness-cli work-map store export [--output FILE]
+  harness-cli work-map store import --file FILE [--force]
   harness-cli work-map mission update --mission ID [--status STATUS] [--next-action TEXT]
   harness-cli work-map stream add --mission ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
   harness-cli work-map stream update --mission ID --stream ID [--status STATUS] [--integration-action TEXT]
@@ -1961,6 +1969,11 @@ Usage:
 Notes:
   Work-map records are stored outside target repos by default under HARNESS_CLI_WORK_MAP_DIR
   or the platform app-data harness-cli/work-map directory.
+  launch fans out from an existing map and uses Codex by default unless --backend overrides it.
+  supervise syncs mission sessions and reports quiet, active, blocked, and handoff counts.
+  store export/import writes portable JSON snapshots; the runtime store remains a JSON directory.
+  serve starts an optional read-only React observer UI over the same records. Use --host 0.0.0.0
+  when viewing from another device on the same trusted network or over Tailscale.
   The records describe missions, workstreams, clones, sessions, evidence, handoffs, blockers,
   and verification observations. They are not a workflow engine.
   Use clone/clone-path language for isolated agent work; this command does not create git worktrees.
