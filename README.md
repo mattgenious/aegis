@@ -13,9 +13,9 @@
 
 Conventions and coding standards are documented in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-Small .NET helper for deterministic calls to the local OpenCode HTTP API.
+Small .NET helper for deterministic delegated agent sessions and durable coordination state across supported backends.
 
-The goal is not to wrap every OpenCode endpoint. It gives agents a stable, low-friction way to launch pseudo-subagent sessions on cheaper/faster models, enforce a final handoff summary contract, and fetch that summary without loading the whole session into context.
+The goal is not to wrap every backend endpoint. It gives agents a stable, low-friction way to launch delegated sessions, enforce a final handoff summary contract, fetch that summary without loading the whole session into context, and keep lightweight work-map records for multi-agent coordination.
 
 ## Build
 
@@ -121,6 +121,23 @@ Use `latest --all` to inspect every matching session title instead of only the n
 opencode-harness-cli latest --search "Ship:" --all --limit 20
 ```
 
+## Work Map
+
+Use `work-map` when a coordinator needs durable state for a mission graph: workstreams, roles, clones, sessions, evidence, final handoffs, blockers, and integration notes. Records are stored outside target repos by default under `HARNESS_CLI_WORK_MAP_DIR`, or the platform app-data `harness-cli/work-map` directory when the variable is unset.
+
+Create a mission, attach a clone-backed workstream, run or link a session, and render an optional observer view:
+
+```powershell
+opencode-harness-cli work-map create --title "Ship search fixes" --intent "Coordinate independent repo slices"
+opencode-harness-cli work-map stream add --mission mission-... --name "API slice" --role implementer --clone E:\agents\workspaces\api-search-fix
+opencode-harness-cli work-map session run --mission mission-... --stream stream-... --backend codex --directory E:\agents\workspaces\api-search-fix --prompt-file task.md
+opencode-harness-cli work-map show --mission mission-... --format html --output work-map.html
+```
+
+The HTML output is a static optional observer over the same JSON records. It is not required for harness-cli execution and does not need a server.
+
+`work-map` uses clone/clone-path terminology deliberately. It records detached full task clones; it does not create or require git worktrees.
+
 ## Useful Commands
 
 ```powershell
@@ -137,6 +154,7 @@ opencode-harness-cli tail --session ses_... --limit 20 --once
 opencode-harness-cli events --limit 10 --timeout 30
 opencode-harness-cli abort --session ses_...
 opencode-harness-cli export --session ses_... --format md --output session-export.md
+opencode-harness-cli work-map show --mission mission-... --format md
 ```
 
 ## Backend Support Matrix
@@ -168,6 +186,7 @@ Legend: ✅ command fully wired in this release, ⚙️ adapter exists and is te
 - `--backend` currently accepts `opencode`, `codex`, and `pi` and is validated at parse time.
 - OpenCode semantics remain the compatibility baseline for prompt wrapping, handoff markers, and summary extraction behavior.
 - Codex and Pi adapters use local persistent backend state outside the target repository by default, under the platform app data directory or `HARNESS_CLI_BACKEND_STATE_DIR` when set. This avoids dirtying the repo and prevents delegated agents from deleting their own session transcript.
+- Work-map mission/session history uses a separate provider-neutral store under `HARNESS_CLI_WORK_MAP_DIR` or app data `harness-cli/work-map`. This store is safe for optional observer UIs and future SQLite migration without changing the conceptual model.
 - Use `--raw` when you want a backend to receive prompt text verbatim.
 - See [docs/multi-backend-rollout.md](./docs/multi-backend-rollout.md) for staged parity status and rollout checklist.
 
