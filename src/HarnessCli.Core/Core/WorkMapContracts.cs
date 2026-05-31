@@ -108,6 +108,10 @@ public sealed record WorkMapAgentSessionRecord
 
     public List<WorkMapEvidenceRecord> Evidence { get; init; } = [];
 
+    public List<WorkMapMessageRecord> Messages { get; init; } = [];
+
+    public List<WorkMapStatusObservationRecord> StatusObservations { get; init; } = [];
+
     public WorkMapHandoffRecord? FinalHandoff { get; init; }
 
     public WorkMapBlockerRecord? Blocker { get; init; }
@@ -146,6 +150,42 @@ public sealed record WorkMapEvidenceRecord
     public string? Summary { get; init; }
 
     public DateTimeOffset AddedAtUtc { get; init; } = DateTimeOffset.UtcNow;
+}
+
+public sealed record WorkMapMessageRecord
+{
+    public string Id { get; init; } = string.Empty;
+
+    public string Role { get; init; } = string.Empty;
+
+    public string? Text { get; init; }
+
+    public string? PartId { get; init; }
+
+    public DateTimeOffset? Timestamp { get; init; }
+
+    public int Sequence { get; init; }
+
+    public bool IsExcerpt { get; init; } = true;
+}
+
+public sealed record WorkMapStatusObservationRecord
+{
+    public DateTimeOffset AtUtc { get; init; } = DateTimeOffset.UtcNow;
+
+    public string? ApiStatus { get; init; }
+
+    public string EffectiveStatus { get; init; } = string.Empty;
+
+    public string DerivedStatus { get; init; } = string.Empty;
+
+    public int MessageCount { get; init; }
+
+    public string? LatestUserMessageId { get; init; }
+
+    public string? LatestAssistantMessageId { get; init; }
+
+    public bool HasFreshSummary { get; init; }
 }
 
 public sealed record WorkMapHandoffRecord
