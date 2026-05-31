@@ -93,7 +93,7 @@ public sealed class WorkMapStoreTests
     }
 
     [Fact]
-    public async Task FileWorkMapStoreSerializesConcurrentMissionMutations()
+    public async Task FileWorkMapStoreSerializesConcurrentMissionMutationsAcrossStoreInstances()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
@@ -106,28 +106,32 @@ public sealed class WorkMapStoreTests
                 Title = "Concurrent mission"
             });
 
-            var tasks = Enumerable.Range(0, 24).Select(index => store.UpdateMissionAsync(
-                "mission-concurrent",
-                mission =>
-                {
-                    var evidence = mission.Evidence.ToList();
-                    evidence.Add(new WorkMapEvidenceRecord
+            var tasks = Enumerable.Range(0, 24).Select(index =>
+            {
+                var workerStore = new FileWorkMapStore(new TempWorkMapPathProvider(tempRoot));
+                return workerStore.UpdateMissionAsync(
+                    "mission-concurrent",
+                    mission =>
                     {
-                        Id = $"evidence-{index:D2}",
-                        Kind = "note",
-                        Summary = $"evidence {index}"
+                        var evidence = mission.Evidence.ToList();
+                        evidence.Add(new WorkMapEvidenceRecord
+                        {
+                            Id = $"evidence-{index:D2}",
+                            Kind = "note",
+                            Summary = $"evidence {index}"
+                        });
+
+                        var streams = mission.WorkstreamIds.ToList();
+                        streams.Add($"stream-{index:D2}");
+
+                        return mission with
+                        {
+                            Evidence = evidence,
+                            WorkstreamIds = streams,
+                            UpdatedAtUtc = DateTimeOffset.UtcNow
+                        };
                     });
-
-                    var streams = mission.WorkstreamIds.ToList();
-                    streams.Add($"stream-{index:D2}");
-
-                    return mission with
-                    {
-                        Evidence = evidence,
-                        WorkstreamIds = streams,
-                        UpdatedAtUtc = DateTimeOffset.UtcNow
-                    };
-                }));
+            });
 
             await Task.WhenAll(tasks);
 
