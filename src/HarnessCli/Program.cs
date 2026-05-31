@@ -1818,6 +1818,8 @@ Usage:
   harness-cli work-map create --title TITLE [--intent TEXT]
   harness-cli work-map stream add --mission ID --name NAME [--clone PATH]
   harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md
+  harness-cli work-map session sync --mission ID --all
+  harness-cli work-map session handoff --session ID --summary TEXT
   harness-cli work-map show --mission ID --format json|md|html
 
 Model examples:
@@ -1941,11 +1943,20 @@ Usage:
   harness-cli work-map list [--format json|md]
   harness-cli work-map show --mission ID [--format json|md|html] [--output FILE]
   harness-cli work-map brief --mission ID --stream ID [--output FILE]
+  harness-cli work-map mission update --mission ID [--status STATUS] [--next-action TEXT]
   harness-cli work-map stream add --mission ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
+  harness-cli work-map stream update --mission ID --stream ID [--status STATUS] [--integration-action TEXT]
+  harness-cli work-map stream delete --mission ID --stream ID [--force]
   harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex] [--role TEXT]
   harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex]
-  harness-cli work-map session sync --session ID
+  harness-cli work-map session sync --session ID [--message-limit N]
+  harness-cli work-map session sync --mission ID --all [--message-limit N]
+  harness-cli work-map session update --session ID [--status STATUS] [--display-name NAME]
+  harness-cli work-map session handoff --session ID (--summary TEXT | --file FILE)
+  harness-cli work-map session blocker set --session ID --summary TEXT [--evidence TEXT]
+  harness-cli work-map session verify --session ID --kind KIND --result pass|fail|skip [--summary TEXT]
   harness-cli work-map evidence add --mission ID [--stream ID] [--session ID] --summary TEXT
+  harness-cli work-map evidence remove --mission ID [--stream ID] [--session ID] --evidence-id ID
 
 Notes:
   Work-map records are stored outside target repos by default under HARNESS_CLI_WORK_MAP_DIR
