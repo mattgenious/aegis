@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -11,6 +12,7 @@ internal static partial class Program
 {
     private const string WorkMapDefaultHost = "127.0.0.1";
     private const int WorkMapDefaultPort = 4896;
+    private static readonly JsonSerializerOptions WorkMapAccessLogJsonOptions = new(JsonSerializerDefaults.Web);
 
     private static async Task<int> WorkMapServe(IWorkMapStore store, WorkMapArgs options)
     {
@@ -18,6 +20,7 @@ internal static partial class Program
         var port = options.Port ?? WorkMapDefaultPort;
         var address = await ResolveWorkMapListenAddressAsync(host);
         var listener = new TcpListener(address, port);
+        var accessLogger = new WorkMapAccessLogger(options.AccessLogPath);
 
         using var cancellation = new CancellationTokenSource();
         ConsoleCancelEventHandler? cancelHandler = null;
@@ -36,6 +39,17 @@ internal static partial class Program
             var displayHost = FormatWorkMapUrlHost(host, address);
             Console.WriteLine($"Work-map observer listening on http://{displayHost}:{port}/");
             Console.WriteLine($"Reading records from {WorkMapDataDirectory(store)}");
+            Console.WriteLine("Request access log is written to stderr.");
+            if (accessLogger.FilePath is not null)
+            {
+                Console.WriteLine($"Writing request access log JSONL to {accessLogger.FilePath}");
+            }
+
+            if (IsLoopbackAddress(address))
+            {
+                Console.WriteLine($"For Tailscale Serve without changing firewall rules, run: tailscale serve --bg http://127.0.0.1:{port}/");
+            }
+
             if (address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
             {
                 Console.WriteLine("For another device, open http://<this-device-ip>:" + port + "/ on the same trusted network or Tailscale.");
@@ -49,7 +63,7 @@ internal static partial class Program
                     {
                         try
                         {
-                            await HandleWorkMapHttpClientAsync(store, client, cancellation.Token);
+                            await HandleWorkMapHttpClientAsync(store, client, accessLogger, cancellation.Token);
                         }
                         catch (Exception ex) when (!cancellation.IsCancellationRequested)
                         {
@@ -77,62 +91,78 @@ internal static partial class Program
     private static async Task HandleWorkMapHttpClientAsync(
         IWorkMapStore store,
         TcpClient client,
+        WorkMapAccessLogger accessLogger,
         CancellationToken cancellationToken)
     {
-        using (client)
+        WorkMapHttpRequest? request = null;
+        int? statusCode = null;
+        var started = Stopwatch.GetTimestamp();
+        var remoteEndpoint = client.Client.RemoteEndPoint?.ToString();
+
+        try
         {
-            client.NoDelay = true;
-            await using var stream = client.GetStream();
-            var request = await ReadWorkMapHttpRequestAsync(stream, cancellationToken);
-            if (request is null)
+            using (client)
             {
-                return;
-            }
-
-            var isHead = string.Equals(request.Method, "HEAD", StringComparison.OrdinalIgnoreCase);
-            if (!isHead && !string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase))
-            {
-                await WriteWorkMapJsonHttpResponseAsync(
-                    stream,
-                    StatusCodes.MethodNotAllowed,
-                    new { error = "Only GET and HEAD are supported." },
-                    isHead,
-                    cancellationToken);
-                return;
-            }
-
-            try
-            {
-                if (request.Path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+                client.NoDelay = true;
+                await using var stream = client.GetStream();
+                request = await ReadWorkMapHttpRequestAsync(stream, cancellationToken);
+                if (request is null)
                 {
-                    await HandleWorkMapApiRequestAsync(store, stream, request, isHead, cancellationToken);
                     return;
                 }
 
-                await HandleWorkMapStaticRequestAsync(stream, request.Path, isHead, cancellationToken);
+                var isHead = string.Equals(request.Method, "HEAD", StringComparison.OrdinalIgnoreCase);
+                if (!isHead && !string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase))
+                {
+                    statusCode = StatusCodes.MethodNotAllowed;
+                    await WriteWorkMapJsonHttpResponseAsync(
+                        stream,
+                        statusCode.Value,
+                        new { error = "Only GET and HEAD are supported." },
+                        isHead,
+                        cancellationToken);
+                    return;
+                }
+
+                try
+                {
+                    statusCode = request.Path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
+                        ? await HandleWorkMapApiRequestAsync(store, stream, request, isHead, cancellationToken)
+                        : await HandleWorkMapStaticRequestAsync(stream, request.Path, isHead, cancellationToken);
+                }
+                catch (JsonException ex)
+                {
+                    statusCode = StatusCodes.InternalServerError;
+                    await WriteWorkMapJsonHttpResponseAsync(
+                        stream,
+                        statusCode.Value,
+                        new { error = "Failed to read work-map JSON records.", detail = ex.Message },
+                        isHead,
+                        cancellationToken);
+                }
+                catch (IOException ex)
+                {
+                    statusCode = StatusCodes.InternalServerError;
+                    await WriteWorkMapJsonHttpResponseAsync(
+                        stream,
+                        statusCode.Value,
+                        new { error = "Failed to read work-map records.", detail = ex.Message },
+                        isHead,
+                        cancellationToken);
+                }
             }
-            catch (JsonException ex)
+        }
+        finally
+        {
+            if (request is not null && statusCode is not null)
             {
-                await WriteWorkMapJsonHttpResponseAsync(
-                    stream,
-                    StatusCodes.InternalServerError,
-                    new { error = "Failed to read work-map JSON records.", detail = ex.Message },
-                    isHead,
-                    cancellationToken);
-            }
-            catch (IOException ex)
-            {
-                await WriteWorkMapJsonHttpResponseAsync(
-                    stream,
-                    StatusCodes.InternalServerError,
-                    new { error = "Failed to read work-map records.", detail = ex.Message },
-                    isHead,
-                    cancellationToken);
+                var durationMs = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                await accessLogger.LogAsync(request, remoteEndpoint, statusCode.Value, durationMs, cancellationToken);
             }
         }
     }
 
-    private static async Task HandleWorkMapApiRequestAsync(
+    private static async Task<int> HandleWorkMapApiRequestAsync(
         IWorkMapStore store,
         NetworkStream stream,
         WorkMapHttpRequest request,
@@ -147,7 +177,7 @@ internal static partial class Program
                 new WorkMapObserverHealth(DateTimeOffset.UtcNow, WorkMapDataDirectory(store), "ok"),
                 isHead,
                 cancellationToken);
-            return;
+            return StatusCodes.Ok;
         }
 
         if (request.Path.Equals("/api/missions", StringComparison.OrdinalIgnoreCase))
@@ -158,7 +188,7 @@ internal static partial class Program
                 await BuildWorkMapOverviewAsync(store, cancellationToken),
                 isHead,
                 cancellationToken);
-            return;
+            return StatusCodes.Ok;
         }
 
         const string missionPrefix = "/api/missions/";
@@ -168,14 +198,14 @@ internal static partial class Program
             if (missionId.Contains('/', StringComparison.Ordinal))
             {
                 await WriteWorkMapNotFoundAsync(stream, isHead, cancellationToken);
-                return;
+                return StatusCodes.NotFound;
             }
 
             var mission = await store.GetMissionAsync(missionId, cancellationToken);
             if (mission is null)
             {
                 await WriteWorkMapNotFoundAsync(stream, isHead, cancellationToken);
-                return;
+                return StatusCodes.NotFound;
             }
 
             await WriteWorkMapJsonHttpResponseAsync(
@@ -184,7 +214,7 @@ internal static partial class Program
                 await BuildWorkMapMissionDetailAsync(store, mission, cancellationToken),
                 isHead,
                 cancellationToken);
-            return;
+            return StatusCodes.Ok;
         }
 
         const string sessionPrefix = "/api/sessions/";
@@ -194,14 +224,14 @@ internal static partial class Program
             if (sessionId.Contains('/', StringComparison.Ordinal))
             {
                 await WriteWorkMapNotFoundAsync(stream, isHead, cancellationToken);
-                return;
+                return StatusCodes.NotFound;
             }
 
             var session = await store.GetAgentSessionAsync(sessionId, cancellationToken);
             if (session is null)
             {
                 await WriteWorkMapNotFoundAsync(stream, isHead, cancellationToken);
-                return;
+                return StatusCodes.NotFound;
             }
 
             WorkMapMissionRecord? mission = string.IsNullOrWhiteSpace(session.MissionId)
@@ -217,10 +247,11 @@ internal static partial class Program
                 new WorkMapSessionDetail(DateTimeOffset.UtcNow, WorkMapDataDirectory(store), mission, workstream, session),
                 isHead,
                 cancellationToken);
-            return;
+            return StatusCodes.Ok;
         }
 
         await WriteWorkMapNotFoundAsync(stream, isHead, cancellationToken);
+        return StatusCodes.NotFound;
     }
 
     private static async Task<WorkMapOverview> BuildWorkMapOverviewAsync(
@@ -250,7 +281,7 @@ internal static partial class Program
             sessions.OrderByDescending(item => item.UpdatedAtUtc).ToArray());
     }
 
-    private static async Task HandleWorkMapStaticRequestAsync(
+    private static async Task<int> HandleWorkMapStaticRequestAsync(
         NetworkStream stream,
         string path,
         bool isHead,
@@ -267,7 +298,7 @@ internal static partial class Program
                 isHead,
                 CacheControl.NoStore,
                 cancellationToken);
-            return;
+            return StatusCodes.ServiceUnavailable;
         }
 
         var relativePath = WorkMapStaticRelativePath(path);
@@ -288,7 +319,7 @@ internal static partial class Program
                 isHead,
                 CacheControl.NoStore,
                 cancellationToken);
-            return;
+            return StatusCodes.ServiceUnavailable;
         }
 
         var bytes = await File.ReadAllBytesAsync(staticPath, cancellationToken);
@@ -306,6 +337,7 @@ internal static partial class Program
             isHead,
             cacheControl,
             cancellationToken);
+        return StatusCodes.Ok;
     }
 
     private static async Task<WorkMapHttpRequest?> ReadWorkMapHttpRequestAsync(
@@ -319,8 +351,14 @@ internal static partial class Program
             return null;
         }
 
-        while (await reader.ReadLineAsync(cancellationToken) is { Length: > 0 })
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (await reader.ReadLineAsync(cancellationToken) is { Length: > 0 } headerLine)
         {
+            var separator = headerLine.IndexOf(':');
+            if (separator > 0)
+            {
+                headers[headerLine[..separator].Trim()] = headerLine[(separator + 1)..].Trim();
+            }
         }
 
         var parts = requestLine.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
@@ -334,7 +372,7 @@ internal static partial class Program
         var uri = Uri.TryCreate(rawTarget, UriKind.Absolute, out var absoluteUri)
             ? absoluteUri
             : new Uri("http://localhost" + (rawTarget.StartsWith("/", StringComparison.Ordinal) ? rawTarget : "/" + rawTarget));
-        return new WorkMapHttpRequest(method, Uri.UnescapeDataString(uri.AbsolutePath), uri.Query);
+        return new WorkMapHttpRequest(method, Uri.UnescapeDataString(uri.AbsolutePath), uri.Query, headers);
     }
 
     private static async Task WriteWorkMapJsonHttpResponseAsync(
@@ -482,6 +520,10 @@ internal static partial class Program
             : host;
     }
 
+    private static bool IsLoopbackAddress(IPAddress address) =>
+        address.Equals(IPAddress.Loopback)
+        || address.Equals(IPAddress.IPv6Loopback);
+
     private static string WorkMapDataDirectory(IWorkMapStore store) =>
         store is FileWorkMapStore fileStore ? fileStore.DirectoryPath : "(custom store)";
 
@@ -509,7 +551,88 @@ internal static partial class Program
         </html>
         """;
 
-    private sealed record WorkMapHttpRequest(string Method, string Path, string Query);
+    private sealed record WorkMapHttpRequest(
+        string Method,
+        string Path,
+        string Query,
+        IReadOnlyDictionary<string, string> Headers)
+    {
+        public string Target => Path + Query;
+
+        public string? UserAgent => Headers.TryGetValue("User-Agent", out var userAgent) ? userAgent : null;
+    }
+
+    private sealed class WorkMapAccessLogger
+    {
+        private readonly SemaphoreSlim _gate = new(1, 1);
+
+        public WorkMapAccessLogger(string? filePath)
+        {
+            FilePath = string.IsNullOrWhiteSpace(filePath) ? null : Path.GetFullPath(filePath);
+            var directory = FilePath is null ? null : Path.GetDirectoryName(FilePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+        }
+
+        public string? FilePath { get; }
+
+        public async Task LogAsync(
+            WorkMapHttpRequest request,
+            string? remoteEndpoint,
+            int statusCode,
+            long durationMs,
+            CancellationToken cancellationToken)
+        {
+            var timestamp = DateTimeOffset.UtcNow;
+            Console.Error.WriteLine(
+                $"{timestamp:O} {remoteEndpoint ?? "-"} {request.Method} {request.Target} {statusCode} {durationMs}ms");
+
+            if (FilePath is null)
+            {
+                return;
+            }
+
+            var entry = new WorkMapAccessLogEntry(
+                timestamp,
+                remoteEndpoint,
+                request.Method,
+                request.Path,
+                request.Query,
+                statusCode,
+                durationMs,
+                request.UserAgent);
+            var line = JsonSerializer.Serialize(entry, WorkMapAccessLogJsonOptions) + Environment.NewLine;
+
+            try
+            {
+                await _gate.WaitAsync(cancellationToken);
+                try
+                {
+                    await File.AppendAllTextAsync(FilePath, line, Encoding.UTF8, cancellationToken);
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                Console.Error.WriteLine($"work-map serve access log failed: {ex.Message}");
+            }
+        }
+    }
+
+    private sealed record WorkMapAccessLogEntry(
+        DateTimeOffset AtUtc,
+        string? RemoteEndpoint,
+        string Method,
+        string Path,
+        string Query,
+        int StatusCode,
+        long DurationMs,
+        string? UserAgent);
 
     private sealed record WorkMapOverview(
         DateTimeOffset GeneratedAtUtc,
