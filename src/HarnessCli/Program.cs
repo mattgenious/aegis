@@ -176,6 +176,7 @@ internal static partial class Program
         {
             BackendKind.Codex => new CodexBackend(),
             BackendKind.Pi => new PiBackend(),
+            BackendKind.Copilot => new CopilotBackend(),
             _ => new OpencodeBackend(client)
         };
 
@@ -187,7 +188,7 @@ internal static partial class Program
         {
             if (!BackendKindExtensions.TryParse(backendValue, out var backendKind))
             {
-                throw new ArgumentException($"Unsupported backend '{backendValue}'. Use --backend opencode, codex, or pi.");
+                throw new ArgumentException($"Unsupported backend '{backendValue}'. Use --backend opencode, codex, pi, or copilot.");
             }
 
             backendOverride = backendKind;
@@ -979,7 +980,28 @@ internal static partial class Program
             System: options.ResolvedSystem,
             NoReply: options.NoReply,
             Raw: options.Raw,
-            Options: null);
+            Options: BuildBackendPromptOptions(options));
+    }
+
+    private static System.Collections.Immutable.ImmutableDictionary<string, string> BuildBackendPromptOptions(Options options)
+    {
+        var builder = System.Collections.Immutable.ImmutableDictionary.CreateBuilder<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (options.CopilotAllowTools.Count > 0)
+        {
+            builder["copilot.allowTool"] = string.Join(';', options.CopilotAllowTools);
+        }
+
+        if (options.CopilotAllowUrls.Count > 0)
+        {
+            builder["copilot.allowUrl"] = string.Join(';', options.CopilotAllowUrls);
+        }
+
+        if (options.CopilotAllowAll)
+        {
+            builder["copilot.allowAll"] = "true";
+        }
+
+        return builder.ToImmutable();
     }
 
     private static JsonObject BuildSessionStateJson(SessionStateSnapshot state)
@@ -1846,7 +1868,7 @@ GPT-5-family variant availability seen locally:
   github-copilot/gpt-5.5:      none, low, medium, high, xhigh
 
 Common options:
-  --backend VALUE      Backend selector. One of: opencode, codex, pi. Default: opencode.
+  --backend VALUE      Backend selector. One of: opencode, codex, pi, copilot. Default: opencode.
   --engine VALUE       Alias for --backend.
   --server URL          OpenCode server URL. Default: http://127.0.0.1:4096
   --model provider/id   Model in provider/model format. Preferred: github-copilot/gpt-5.4-mini or github-copilot/gpt-5.5.
@@ -1862,6 +1884,9 @@ Common options:
   --output FILE         Write export output to a file instead of stdout.
   --raw                 Send the prompt exactly as provided; disables the FINAL HANDOFF wrapper.
   --no-reply            Safe probe: add a user message without asking a model.
+  --copilot-allow-tool VALUE  With --backend copilot, repeat to pass explicit --allow-tool values.
+  --copilot-allow-url VALUE   With --backend copilot, repeat to pass explicit --allow-url values.
+  --copilot-allow-all         With --backend copilot, pass --allow-all. Use sparingly.
   --async               Return immediately after queuing the prompt; use wait/status/last-summary later.
   --wait                With --async, wait for completion before extracting summary.
   --all                 With latest, print every returned matching session instead of only the first.
@@ -1955,8 +1980,8 @@ Usage:
   harness-cli work-map stream add --mission ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
   harness-cli work-map stream update --mission ID --stream ID [--status STATUS] [--integration-action TEXT]
   harness-cli work-map stream delete --mission ID --stream ID [--force]
-  harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex] [--role TEXT]
-  harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex] [--async] [--wait]
+  harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex|copilot] [--role TEXT]
+  harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex|copilot] [--async] [--wait]
   harness-cli work-map session sync --session ID [--message-limit N]
   harness-cli work-map session sync --mission ID --all [--message-limit N]
   harness-cli work-map session update --session ID [--status STATUS] [--display-name NAME]
@@ -2324,6 +2349,8 @@ Examples:
         public string? Output { get; private set; }
         public List<string> Targets { get; } = [];
         public List<string> Sessions { get; } = [];
+        public List<string> CopilotAllowTools { get; } = [];
+        public List<string> CopilotAllowUrls { get; } = [];
         public Dictionary<string, string> ResumeSessions { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string SummaryMarker { get; private set; } = "FINAL HANDOFF";
         public string? Backend { get; private set; }
@@ -2337,6 +2364,7 @@ Examples:
         public bool DryRun { get; private set; }
         public bool Once { get; private set; }
         public bool UntilIdle { get; private set; }
+        public bool CopilotAllowAll { get; private set; }
         public int Limit { get; private set; }
         public int IntervalMinutes { get; private set; } = 60;
         public int IntervalSeconds { get; private set; } = 5;
@@ -2402,6 +2430,8 @@ Examples:
                     case "--format": options.Format = Value(queue, arg); break;
                     case "--output": options.Output = Value(queue, arg); break;
                     case "--target": options.Targets.Add(Value(queue, arg)); break;
+                    case "--copilot-allow-tool": options.CopilotAllowTools.Add(Value(queue, arg)); break;
+                    case "--copilot-allow-url": options.CopilotAllowUrls.Add(Value(queue, arg)); break;
                     case "--backend": options.Backend = Value(queue, arg); break;
                     case "--engine": options.Engine = Value(queue, arg); break;
                     case "--resume-session": AddResumeSession(options.ResumeSessions, Value(queue, arg), arg); break;
@@ -2416,6 +2446,7 @@ Examples:
                     case "--dry-run": options.DryRun = true; break;
                     case "--once": options.Once = true; break;
                     case "--until-idle": options.UntilIdle = true; break;
+                    case "--copilot-allow-all": options.CopilotAllowAll = true; break;
                     case "--limit": options.Limit = PositiveInt(Value(queue, arg), arg); break;
                     case "--interval-minutes": options.IntervalMinutes = PositiveInt(Value(queue, arg), arg); break;
                     case "--interval-seconds": options.IntervalSeconds = PositiveInt(Value(queue, arg), arg); break;

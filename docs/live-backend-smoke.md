@@ -9,6 +9,7 @@ Last verified: 2026-05-23.
 - OpenCode: `opencode --help`, `opencode serve --help`, npm package metadata for `opencode-ai@1.15.10` and `opencode-linux-x64@1.15.10`.
 - Codex: local `codex exec --help`; smoke host reported `codex-cli 0.133.0-alpha.1`.
 - Pi: local `pi --help` / `pi --mode json --help`; smoke host reported `pi 0.75.4`.
+- GitHub Copilot CLI: not live-smoked in this pass because `copilot` was not installed on PATH in the coordinator environment.
 
 ## Verified Commands
 
@@ -66,9 +67,24 @@ pi backend smoke passed"
 
 Result: `summary = "pi backend smoke passed"`.
 
+GitHub Copilot CLI:
+
+```bash
+dotnet src/HarnessCli/bin/Debug/net10.0/harness-cli.dll ask \
+  --backend copilot \
+  --directory /tmp/harness-cli-live-smoke/repo \
+  --timeout 240 \
+  --prompt "Smoke test. Do not run tools. Reply exactly with: FINAL HANDOFF
+copilot backend smoke passed"
+```
+
+Result: pending. The adapter is covered by unit tests and returns actionable missing-binary guidance, but a live smoke requires GitHub Copilot CLI installed and authenticated with `copilot login` or `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`.
+
 ## Live Fixes From This Pass
 
 2026-05-23:
+
+- Added GitHub Copilot CLI backend support behind `--backend copilot`; live smoke remains pending until the `copilot` binary is installed and authenticated locally.
 
 - Published `HarnessCli.Core 0.1.0` and `HarnessCli.Backends 0.1.0` to GitHub Packages and validated Baton can restore/use the package-backed launcher path.
 - Published `HarnessCli.Core 0.1.1` and `HarnessCli.Backends 0.1.1` after moving Codex/Pi backend state outside target repositories.

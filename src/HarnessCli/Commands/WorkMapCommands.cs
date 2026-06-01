@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -399,7 +400,8 @@ internal static partial class Program
             Agent: resolved.Agent,
             System: resolved.System,
             NoReply: options.NoReply,
-            Raw: options.Raw);
+            Raw: options.Raw,
+            Options: BuildCopilotOptions(options));
 
         WorkMapAgentSessionRecord? attachedSession = null;
         BackendAskResult result;
@@ -1016,7 +1018,14 @@ internal static partial class Program
             try
             {
                 var prompt = BuildLaunchPrompt(mission, workstream, streamSessions, extraPrompt);
-                var outcome = await RunWorkMapSession(store, mission, workstream, options, prompt, async: true, wait: options.Wait);
+                var outcome = await RunWorkMapSession(
+                    store,
+                    mission,
+                    workstream,
+                    options,
+                    prompt,
+                    async: resolved.Backend != BackendKind.Copilot,
+                    wait: options.Wait);
                 sessions.Add(outcome.Session);
                 if (outcome.Blocker is not null)
                 {
@@ -1474,6 +1483,27 @@ internal static partial class Program
                + extraPrompt.Trim() + Environment.NewLine;
     }
 
+    private static ImmutableDictionary<string, string> BuildCopilotOptions(WorkMapArgs options)
+    {
+        var builder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (options.CopilotAllowTools.Count > 0)
+        {
+            builder["copilot.allowTool"] = string.Join(';', options.CopilotAllowTools);
+        }
+
+        if (options.CopilotAllowUrls.Count > 0)
+        {
+            builder["copilot.allowUrl"] = string.Join(';', options.CopilotAllowUrls);
+        }
+
+        if (options.CopilotAllowAll)
+        {
+            builder["copilot.allowAll"] = "true";
+        }
+
+        return builder.ToImmutable();
+    }
+
     private static async Task<WorkMapAgentSessionRecord> MarkWorkMapSessionSyncFailed(
         IWorkMapStore store,
         WorkMapAgentSessionRecord session,
@@ -1761,7 +1791,7 @@ internal static partial class Program
     {
         if (!BackendKindExtensions.TryParse(value, out var backend))
         {
-            throw new ArgumentException($"Unsupported backend '{value}'. Use opencode, codex, or pi.");
+            throw new ArgumentException($"Unsupported backend '{value}'. Use opencode, codex, pi, or copilot.");
         }
 
         return backend;
@@ -2215,6 +2245,10 @@ internal static partial class Program
 
         public List<string> DependsOn { get; } = [];
 
+        public List<string> CopilotAllowTools { get; } = [];
+
+        public List<string> CopilotAllowUrls { get; } = [];
+
         public bool Async { get; private set; }
 
         public bool Wait { get; private set; }
@@ -2234,6 +2268,8 @@ internal static partial class Program
         public bool UntilIdle { get; private set; }
 
         public bool LaunchMissing { get; private set; }
+
+        public bool CopilotAllowAll { get; private set; }
 
         public int TimeoutSeconds { get; private set; } = 300;
 
@@ -2273,6 +2309,8 @@ internal static partial class Program
                     case "--source-repo": parsed.SourceRepoPath = Value(queue, arg); break;
                     case "--branch": parsed.Branch = Value(queue, arg); break;
                     case "--depends-on": parsed.DependsOn.Add(Value(queue, arg)); break;
+                    case "--copilot-allow-tool": parsed.CopilotAllowTools.Add(Value(queue, arg)); break;
+                    case "--copilot-allow-url": parsed.CopilotAllowUrls.Add(Value(queue, arg)); break;
                     case "--integration-action": parsed.IntegrationAction = Value(queue, arg); break;
                     case "--display-name": parsed.DisplayName = Value(queue, arg); break;
                     case "--backend": parsed.Backend = Value(queue, arg); break;
@@ -2315,6 +2353,7 @@ internal static partial class Program
                     case "--include-complete": parsed.IncludeComplete = true; break;
                     case "--until-idle": parsed.UntilIdle = true; break;
                     case "--launch-missing": parsed.LaunchMissing = true; break;
+                    case "--copilot-allow-all": parsed.CopilotAllowAll = true; break;
                     case "--interval-seconds":
                         parsed.IntervalSeconds = PositiveInt(Value(queue, arg), arg);
                         break;

@@ -18,6 +18,10 @@ public class DomainContractsTests
         Assert.Equal(BackendKind.Codex, codex);
         Assert.True(BackendKindExtensions.TryParse("pi.dev", out var pi));
         Assert.Equal(BackendKind.Pi, pi);
+        Assert.True(BackendKindExtensions.TryParse(" Copilot ", out var copilotWithWhitespace));
+        Assert.Equal(BackendKind.Copilot, copilotWithWhitespace);
+        Assert.True(BackendKindExtensions.TryParse("github-copilot", out var copilot));
+        Assert.Equal(BackendKind.Copilot, copilot);
         Assert.False(BackendKindExtensions.TryParse("unknown", out _));
         Assert.False(BackendKindExtensions.TryParse(" ", out _));
     }
@@ -28,6 +32,7 @@ public class DomainContractsTests
         Assert.Equal("opencode", BackendKind.Opencode.ToOptionValue());
         Assert.Equal("codex", BackendKind.Codex.ToOptionValue());
         Assert.Equal("pi", BackendKind.Pi.ToOptionValue());
+        Assert.Equal("copilot", BackendKind.Copilot.ToOptionValue());
     }
 
     [Fact]
