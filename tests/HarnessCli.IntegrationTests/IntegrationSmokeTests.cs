@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Xunit;
 
@@ -140,6 +141,82 @@ public class IntegrationSmokeTests
     }
 
     [Fact]
+    public async Task WorkMapSessionRunAttachesSessionBeforeBlockingCodexCompletes()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var fakeBin = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Process? process = null;
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            Directory.CreateDirectory(workspace);
+            Directory.CreateDirectory(fakeBin);
+            CreateFakeSlowCodex(fakeBin);
+
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Visible run")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Slow codex")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            process = StartCliProcess(
+                workMapStore,
+                startInfo =>
+                {
+                    var path = startInfo.Environment.TryGetValue("PATH", out var existingPath)
+                        ? existingPath
+                        : Environment.GetEnvironmentVariable("PATH");
+                    startInfo.Environment["PATH"] = fakeBin + Path.PathSeparator + path;
+                    startInfo.Environment["HARNESS_CLI_CODEX_BINARY"] = OperatingSystem.IsWindows()
+                        ? Path.Combine(fakeBin, "codex.cmd")
+                        : Path.Combine(fakeBin, "codex");
+                },
+                "work-map",
+                "session",
+                "run",
+                "--mission",
+                missionId,
+                "--stream",
+                streamId,
+                "--backend",
+                "codex",
+                "--directory",
+                workspace,
+                "--prompt",
+                "slow fake codex",
+                "--timeout",
+                "12");
+
+            var earlySession = await WaitForMissionSession(workMapStore, missionId, process);
+
+            Assert.False(process.HasExited);
+            Assert.Equal("running", earlySession["status"]!.GetValue<string>());
+            Assert.Equal(missionId, earlySession["missionId"]!.GetValue<string>());
+            Assert.Equal(streamId, earlySession["workstreamId"]!.GetValue<string>());
+
+            await WaitForCliExit(process, TimeSpan.FromSeconds(30));
+            var stdout = await process.StandardOutput.ReadToEndAsync();
+            var stderr = await process.StandardError.ReadToEndAsync();
+            Assert.True(process.ExitCode == 0, $"harness-cli failed with exit {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+
+            var finalSession = await ReadWorkMapSession(workMapStore, earlySession["id"]!.GetValue<string>());
+            Assert.Equal("handoff", finalSession["status"]!.GetValue<string>());
+            Assert.Contains("fake codex done", finalSession["finalHandoff"]!["text"]!.GetValue<string>());
+        }
+        finally
+        {
+            if (process is not null)
+            {
+                await StopProcess(process);
+            }
+
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+            if (Directory.Exists(fakeBin)) Directory.Delete(fakeBin, true);
+        }
+    }
+
+    [Fact]
     public async Task WorkMapServeWritesJsonlAccessLog()
     {
         var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -224,7 +301,7 @@ public class IntegrationSmokeTests
         }
 
         startInfo.Environment["HARNESS_CLI_WORK_MAP_DIR"] = workMapStore;
-        startInfo.Environment["HARNESS_CLI_SESSION_DIR"] = Path.Combine(workMapStore, "sessions");
+        startInfo.Environment["HARNESS_CLI_SESSION_DIR"] = Path.Combine(workMapStore, "session-registry");
         startInfo.Environment["HARNESS_CLI_BACKEND_STATE_DIR"] = Path.Combine(workMapStore, "backend-state");
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start harness-cli test process.");
@@ -247,7 +324,13 @@ public class IntegrationSmokeTests
         return result;
     }
 
-    private static Process StartCliProcess(string workMapStore, params string[] args)
+    private static Process StartCliProcess(string workMapStore, params string[] args) =>
+        StartCliProcess(workMapStore, null, args);
+
+    private static Process StartCliProcess(
+        string workMapStore,
+        Action<ProcessStartInfo>? configureStartInfo,
+        params string[] args)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -264,12 +347,107 @@ public class IntegrationSmokeTests
         }
 
         startInfo.Environment["HARNESS_CLI_WORK_MAP_DIR"] = workMapStore;
-        startInfo.Environment["HARNESS_CLI_SESSION_DIR"] = Path.Combine(workMapStore, "sessions");
+        startInfo.Environment["HARNESS_CLI_SESSION_DIR"] = Path.Combine(workMapStore, "session-registry");
         startInfo.Environment["HARNESS_CLI_BACKEND_STATE_DIR"] = Path.Combine(workMapStore, "backend-state");
+        configureStartInfo?.Invoke(startInfo);
 
         var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start harness-cli test process.");
         process.StandardInput.Close();
         return process;
+    }
+
+    private static void CreateFakeSlowCodex(string fakeBin)
+    {
+        const string outputLine = """{"type":"item.completed","item":{"type":"agent_message","id":"msg_fake","text":"FINAL HANDOFF\nfake codex done"},"timestamp":"2026-01-01T12:00:00+00:00"}""";
+        if (OperatingSystem.IsWindows())
+        {
+            var scriptPath = Path.Combine(fakeBin, "fake-codex.ps1");
+            File.WriteAllText(
+                scriptPath,
+                string.Join(
+                    Environment.NewLine,
+                    "Start-Sleep -Seconds 5",
+                    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+                    $"Write-Output '{outputLine}'",
+                    "exit 0"));
+            File.WriteAllText(
+                Path.Combine(fakeBin, "codex.cmd"),
+                string.Join(Environment.NewLine, "@echo off", "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-codex.ps1\""));
+            return;
+        }
+
+        var executablePath = Path.Combine(fakeBin, "codex");
+        File.WriteAllText(
+            executablePath,
+            string.Join(
+                "\n",
+                "#!/bin/sh",
+                "sleep 5",
+                "printf '%s\\n' '" + outputLine.Replace("'", "'\"'\"'") + "'",
+                "exit 0"));
+        File.SetUnixFileMode(
+            executablePath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+    }
+
+    private static async Task<JsonNode> WaitForMissionSession(string workMapStore, string missionId, Process process)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (process.HasExited)
+            {
+                var stdout = await process.StandardOutput.ReadToEndAsync();
+                var stderr = await process.StandardError.ReadToEndAsync();
+                throw new InvalidOperationException($"work-map session run exited before a session record appeared with {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+            }
+
+            var sessionsDirectory = Path.Combine(workMapStore, "sessions");
+            if (Directory.Exists(sessionsDirectory))
+            {
+                foreach (var file in Directory.EnumerateFiles(sessionsDirectory, "*.json"))
+                {
+                    try
+                    {
+                        var node = JsonNode.Parse(await File.ReadAllTextAsync(file));
+                        if (node is not null
+                            && string.Equals(node["missionId"]?.GetValue<string>(), missionId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return node;
+                        }
+                    }
+                    catch (Exception ex) when (ex is IOException or JsonException)
+                    {
+                    }
+                }
+            }
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException($"Timed out waiting for a work-map session record for mission {missionId}.");
+    }
+
+    private static async Task<JsonNode> ReadWorkMapSession(string workMapStore, string sessionId)
+    {
+        var sessionPath = Path.Combine(workMapStore, "sessions", sessionId + ".json");
+        return JsonNode.Parse(await File.ReadAllTextAsync(sessionPath))!;
+    }
+
+    private static async Task WaitForCliExit(Process process, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        try
+        {
+            await process.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("Timed out waiting for harness-cli test process.");
+        }
     }
 
     private static async Task WaitForObserver(int port, Process process)

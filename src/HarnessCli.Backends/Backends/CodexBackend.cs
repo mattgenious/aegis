@@ -18,14 +18,16 @@ public sealed class CodexBackend : ISessionBackend
     private const string RunScriptSuffix = ".run";
 
     private readonly string? _stateRoot;
+    private readonly string _codexBinary;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
     };
 
-    public CodexBackend(string? stateRoot = null)
+    public CodexBackend(string? stateRoot = null, string? codexBinary = null)
     {
         _stateRoot = stateRoot;
+        _codexBinary = ResolveCodexBinary(codexBinary);
     }
 
     public BackendKind Kind => BackendKind.Codex;
@@ -66,19 +68,7 @@ public sealed class CodexBackend : ISessionBackend
             return await StartDetachedAsync(session, prompt, args, cancellationToken);
         }
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = CodexBinary,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        foreach (var arg in args)
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
+        var startInfo = CreateCodexStartInfo(args);
 
         try
         {
@@ -275,6 +265,7 @@ public sealed class CodexBackend : ISessionBackend
 
         var scriptPath = await WriteDetachedRunScriptAsync(
             statePath,
+            _codexBinary,
             args,
             promptPath,
             stdoutPath,
@@ -352,12 +343,81 @@ public sealed class CodexBackend : ISessionBackend
         return args;
     }
 
+    private static string ResolveCodexBinary(string? codexBinary)
+    {
+        if (!string.IsNullOrWhiteSpace(codexBinary))
+        {
+            return codexBinary;
+        }
+
+        var configured = Environment.GetEnvironmentVariable("HARNESS_CLI_CODEX_BINARY");
+        return string.IsNullOrWhiteSpace(configured) ? CodexBinary : configured;
+    }
+
+    private ProcessStartInfo CreateCodexStartInfo(IReadOnlyList<string> args)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        if (OperatingSystem.IsWindows() && IsWindowsCommandScript(_codexBinary))
+        {
+            startInfo.FileName = "cmd.exe";
+            var commandLine = string.Join(' ', new[] { _codexBinary }.Concat(args).Select(QuoteWindowsCmdArg));
+            startInfo.Arguments = "/d /s /c \"" + commandLine + "\"";
+            return startInfo;
+        }
+
+        if (OperatingSystem.IsWindows() && _codexBinary.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase))
+        {
+            startInfo.FileName = "powershell.exe";
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-ExecutionPolicy");
+            startInfo.ArgumentList.Add("Bypass");
+            startInfo.ArgumentList.Add("-File");
+            startInfo.ArgumentList.Add(_codexBinary);
+            foreach (var arg in args)
+            {
+                startInfo.ArgumentList.Add(arg);
+            }
+
+            return startInfo;
+        }
+
+        if (!OperatingSystem.IsWindows() && _codexBinary.EndsWith(".sh", StringComparison.OrdinalIgnoreCase))
+        {
+            startInfo.FileName = "/bin/sh";
+            startInfo.ArgumentList.Add(_codexBinary);
+        }
+        else
+        {
+            startInfo.FileName = _codexBinary;
+        }
+
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        return startInfo;
+    }
+
+    private static bool IsWindowsCommandScript(string path) =>
+        path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsDetachedRequest(PromptRequest request) =>
         request.Options.TryGetValue("harness.async", out var value)
         && value.Equals("true", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<string> WriteDetachedRunScriptAsync(
         string statePath,
+        string codexBinary,
         IReadOnlyList<string> args,
         string promptPath,
         string stdoutPath,
@@ -370,7 +430,7 @@ public sealed class CodexBackend : ISessionBackend
         if (OperatingSystem.IsWindows())
         {
             script = "@echo off\r\n"
-                     + string.Join(' ', new[] { CodexBinary }.Concat(args).Select(QuoteWindowsCmdArg))
+                     + string.Join(' ', new[] { codexBinary }.Concat(args).Select(QuoteWindowsCmdArg))
                      + " < " + QuoteWindowsCmdArg(promptPath)
                      + " > " + QuoteWindowsCmdArg(stdoutPath)
                      + " 2> " + QuoteWindowsCmdArg(stderrPath)
@@ -381,7 +441,7 @@ public sealed class CodexBackend : ISessionBackend
         else
         {
             script = "#!/bin/sh\n"
-                     + string.Join(' ', new[] { CodexBinary }.Concat(args).Select(QuotePosixShellArg))
+                     + string.Join(' ', new[] { codexBinary }.Concat(args).Select(QuotePosixShellArg))
                      + " < " + QuotePosixShellArg(promptPath)
                      + " > " + QuotePosixShellArg(stdoutPath)
                      + " 2> " + QuotePosixShellArg(stderrPath)
