@@ -166,8 +166,22 @@ public sealed class OpencodeBackend : ISessionBackend
     private static void AddPromptMetadata(JsonObject body, PromptRequest request)
     {
         if (request.Agent is not null) body["agent"] = request.Agent;
-        if (request.ModelProvider is not null) body["provider"] = request.ModelProvider;
-        if (request.Model is not null) body["model"] = request.Model;
+        if (request.Model is not null)
+        {
+            if (string.IsNullOrWhiteSpace(request.ModelProvider))
+            {
+                body["model"] = request.Model;
+            }
+            else
+            {
+                body["model"] = new JsonObject
+                {
+                    ["providerID"] = request.ModelProvider,
+                    ["modelID"] = request.Model
+                };
+            }
+        }
+
         if (request.Variant is not null) body["variant"] = request.Variant;
         if (request.Directory is not null) body["directory"] = request.Directory;
         if (request.Options is { Count: >0 })
