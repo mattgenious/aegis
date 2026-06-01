@@ -2,14 +2,14 @@
 
 This project is an agent-facing CLI, so backend support is not considered verified by compilation alone. A backend smoke pass means `harness-cli ask` reached a live backend process, received an assistant response, and extracted a fresh `FINAL HANDOFF` summary.
 
-Last verified: 2026-05-23.
+Last verified: 2026-06-01.
 
 ## Source Of Truth Checked
 
 - OpenCode: `opencode --help`, `opencode serve --help`, npm package metadata for `opencode-ai@1.15.10` and `opencode-linux-x64@1.15.10`.
 - Codex: local `codex exec --help`; smoke host reported `codex-cli 0.133.0-alpha.1`.
 - Pi: local `pi --help` / `pi --mode json --help`; smoke host reported `pi 0.75.4`.
-- GitHub Copilot CLI: not live-smoked in this pass because `copilot` was not installed on PATH in the coordinator environment.
+- GitHub Copilot CLI: `copilot --help`; live smoke host resolved `copilot.exe` from the WinGet Links directory.
 
 ## Verified Commands
 
@@ -78,13 +78,16 @@ dotnet src/HarnessCli/bin/Debug/net10.0/harness-cli.dll ask \
 copilot backend smoke passed"
 ```
 
-Result: pending. The adapter is covered by unit tests and returns actionable missing-binary guidance, but a live smoke requires GitHub Copilot CLI installed and authenticated with `copilot login` or `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`.
+Result: `summary = "copilot backend smoke passed"` through `harness-cli work-map session run --backend copilot --raw`; the work-map record reached `status = "handoff"` with a fresh assistant summary.
 
 ## Live Fixes From This Pass
 
-2026-05-23:
+2026-06-01:
 
-- Added GitHub Copilot CLI backend support behind `--backend copilot`; live smoke remains pending until the `copilot` binary is installed and authenticated locally.
+- Added GitHub Copilot CLI backend support behind `--backend copilot`; initially blocked on missing local `copilot` binary.
+- Reverified GitHub Copilot CLI after installing it with WinGet; `copilot.exe` resolved on PATH and `work-map session run --backend copilot --raw` extracted `FINAL HANDOFF` successfully.
+
+2026-05-23:
 
 - Published `HarnessCli.Core 0.1.0` and `HarnessCli.Backends 0.1.0` to GitHub Packages and validated Baton can restore/use the package-backed launcher path.
 - Published `HarnessCli.Core 0.1.1` and `HarnessCli.Backends 0.1.1` after moving Codex/Pi backend state outside target repositories.
