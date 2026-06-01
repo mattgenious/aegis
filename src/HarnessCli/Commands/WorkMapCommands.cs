@@ -401,100 +401,154 @@ internal static partial class Program
             NoReply: options.NoReply,
             Raw: options.Raw);
 
-        var result = await commands.AskAsync(new BackendAskRequest(
-            SessionId: null,
-            Title: options.Title ?? workstream.Name,
-            ParentSessionId: null,
-            Directory: directory,
-            Prompt: request,
-            Async: async,
-            Wait: wait,
-            Timeout: TimeSpan.FromSeconds(options.TimeoutSeconds)));
-
-        var states = await commands.GetStatusAsync(result.Session.SessionId);
-        var state = states.FirstOrDefault();
-        var summary = result.Summary;
-        if (summary is null && result.PostResult.IsSuccess && state?.HasFreshSummary == true)
+        WorkMapAgentSessionRecord? attachedSession = null;
+        BackendAskResult result;
+        try
         {
-            summary = await commands.GetLastSummaryAsync(result.Session.SessionId, options.SummaryMarker);
+            result = await commands.AskAsync(new BackendAskRequest(
+                SessionId: null,
+                Title: options.Title ?? workstream.Name,
+                ParentSessionId: null,
+                Directory: directory,
+                Prompt: request,
+                Async: async,
+                Wait: wait,
+                Timeout: TimeSpan.FromSeconds(options.TimeoutSeconds),
+                SessionCreated: async sessionRecord =>
+                {
+                    attachedSession = new WorkMapAgentSessionRecord
+                    {
+                        Id = sessionRecord.SessionId,
+                        MissionId = mission.Id,
+                        WorkstreamId = workstream.Id,
+                        DisplayName = options.DisplayName ?? GenerateDisplayName(sessionRecord.SessionId),
+                        Title = options.Title ?? workstream.Name,
+                        Role = options.Role ?? workstream.Role,
+                        Backend = backend.Kind.ToOptionValue(),
+                        BackendSessionId = sessionRecord.BackendSessionId,
+                        Provider = resolved.ModelProvider,
+                        Model = resolved.Model,
+                        Variant = resolved.Variant,
+                        Directory = directory,
+                        Status = "running",
+                        CreatedAtUtc = sessionRecord.CreatedAtUtc,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow,
+                        Events =
+                        [
+                            new WorkMapEventRecord
+                            {
+                                AtUtc = DateTimeOffset.UtcNow,
+                                Type = "promptStarting",
+                                Summary = $"Backend session created; prompt starting through {backend.Kind.ToOptionValue()}."
+                            }
+                        ],
+                        Messages = EnsurePromptMessage(prompt, now, [])
+                    };
+
+                    await SaveSessionAttachment(store, mission, workstream, attachedSession, DateTimeOffset.UtcNow, "Session run started.");
+                }));
+        }
+        catch (Exception ex) when (attachedSession is not null)
+        {
+            return await SaveSessionRunFailure(store, mission, workstream, attachedSession, "Session run failed after backend session creation.", ex.Message);
         }
 
-        IReadOnlyList<BackendMessage> messages = result.PostResult.IsSuccess
-            ? await commands.GetMessagesAsync(result.Session.SessionId, options.MessageLimit)
-            : Array.Empty<BackendMessage>();
-        var messageRecords = EnsurePromptMessage(prompt, now, ToWorkMapMessages(messages));
-        List<WorkMapStatusObservationRecord> observations = state is null
-            ? []
-            : new List<WorkMapStatusObservationRecord> { ToWorkMapStatusObservation(state, DateTimeOffset.UtcNow) };
-
-        var status = summary is not null
-            ? "handoff"
-            : state?.EffectiveStatus
-              ?? (async && !wait ? "queued" : "waiting");
-        WorkMapBlockerRecord? blocker = null;
-        if (!result.PostResult.IsSuccess)
+        try
         {
-            status = "blocked";
-            blocker = new WorkMapBlockerRecord
+            var states = await commands.GetStatusAsync(result.Session.SessionId);
+            var state = states.FirstOrDefault();
+            var summary = result.Summary;
+            if (summary is null && result.PostResult.IsSuccess && state?.HasFreshSummary == true)
             {
-                AtUtc = now,
-                Summary = result.PostResult.Message ?? "Backend prompt failed.",
-                Evidence = result.PostResult.Error
-            };
-        }
-
-        var events = new List<WorkMapEventRecord>
-        {
-            new()
-            {
-                AtUtc = now,
-                Type = "promptSent",
-                Summary = $"Prompt sent through {backend.Kind.ToOptionValue()}."
+                summary = await commands.GetLastSummaryAsync(result.Session.SessionId, options.SummaryMarker);
             }
-        };
-        if (summary is not null)
-        {
+
+            IReadOnlyList<BackendMessage> messages = result.PostResult.IsSuccess
+                ? await commands.GetMessagesAsync(result.Session.SessionId, options.MessageLimit)
+                : Array.Empty<BackendMessage>();
+            var messageRecords = EnsurePromptMessage(prompt, now, ToWorkMapMessages(messages));
+            messageRecords = attachedSession is null
+                ? messageRecords
+                : MergeWorkMapMessages(attachedSession.Messages, messageRecords);
+            var observations = attachedSession?.StatusObservations.ToList() ?? [];
+            if (state is not null)
+            {
+                observations.Add(ToWorkMapStatusObservation(state, DateTimeOffset.UtcNow));
+            }
+
+            var status = summary is not null
+                ? "handoff"
+                : state?.EffectiveStatus
+                  ?? (async && !wait ? "queued" : "waiting");
+            WorkMapBlockerRecord? blocker = null;
+            if (!result.PostResult.IsSuccess)
+            {
+                status = "blocked";
+                blocker = new WorkMapBlockerRecord
+                {
+                    AtUtc = now,
+                    Summary = result.PostResult.Message ?? "Backend prompt failed.",
+                    Evidence = result.PostResult.Error
+                };
+            }
+
+            var events = attachedSession?.Events.ToList() ?? [];
             events.Add(new WorkMapEventRecord
             {
                 AtUtc = DateTimeOffset.UtcNow,
-                Type = "finalHandoffFound",
-                Summary = "Worker returned a final handoff."
+                Type = result.PostResult.IsSuccess ? "promptSent" : "promptFailed",
+                Summary = result.PostResult.IsSuccess
+                    ? $"Prompt sent through {backend.Kind.ToOptionValue()}."
+                    : result.PostResult.Message ?? "Backend prompt failed."
             });
-        }
-
-        var session = new WorkMapAgentSessionRecord
-        {
-            Id = result.Session.SessionId,
-            MissionId = mission.Id,
-            WorkstreamId = workstream.Id,
-            DisplayName = options.DisplayName ?? GenerateDisplayName(result.Session.SessionId),
-            Title = options.Title ?? workstream.Name,
-            Role = options.Role ?? workstream.Role,
-            Backend = backend.Kind.ToOptionValue(),
-            BackendSessionId = result.Session.BackendSessionId,
-            Provider = resolved.ModelProvider,
-            Model = resolved.Model,
-            Variant = resolved.Variant,
-            Directory = directory,
-            Status = status,
-            CreatedAtUtc = now,
-            UpdatedAtUtc = DateTimeOffset.UtcNow,
-            Events = events,
-            Messages = messageRecords,
-            StatusObservations = observations,
-            FinalHandoff = summary is null
-                ? null
-                : new WorkMapHandoffRecord
+            if (summary is not null)
+            {
+                events.Add(new WorkMapEventRecord
                 {
                     AtUtc = DateTimeOffset.UtcNow,
-                    Text = summary.Text
-                },
-            Blocker = blocker
-        };
+                    Type = "finalHandoffFound",
+                    Summary = "Worker returned a final handoff."
+                });
+            }
 
-        await SaveSessionAttachment(store, mission, workstream, session, DateTimeOffset.UtcNow, "Session run recorded.");
+            var session = new WorkMapAgentSessionRecord
+            {
+                Id = result.Session.SessionId,
+                MissionId = mission.Id,
+                WorkstreamId = workstream.Id,
+                DisplayName = options.DisplayName ?? GenerateDisplayName(result.Session.SessionId),
+                Title = options.Title ?? workstream.Name,
+                Role = options.Role ?? workstream.Role,
+                Backend = backend.Kind.ToOptionValue(),
+                BackendSessionId = result.Session.BackendSessionId,
+                Provider = resolved.ModelProvider,
+                Model = resolved.Model,
+                Variant = resolved.Variant,
+                Directory = directory,
+                Status = status,
+                CreatedAtUtc = attachedSession?.CreatedAtUtc ?? now,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                Events = events,
+                Messages = messageRecords,
+                StatusObservations = observations,
+                FinalHandoff = summary is null
+                    ? null
+                    : new WorkMapHandoffRecord
+                    {
+                        AtUtc = DateTimeOffset.UtcNow,
+                        Text = summary.Text
+                    },
+                Blocker = blocker
+            };
 
-        return new WorkMapSessionRunOutcome(session, blocker);
+            await SaveSessionRunUpdate(store, mission, workstream, session, DateTimeOffset.UtcNow, attachedSession is null);
+
+            return new WorkMapSessionRunOutcome(session, blocker);
+        }
+        catch (Exception ex) when (attachedSession is not null)
+        {
+            return await SaveSessionRunFailure(store, mission, workstream, attachedSession, "Session run sync failed after backend prompt.", ex.Message);
+        }
     }
 
     private static async Task<int> WorkMapSessionSync(IWorkMapStore store, WorkMapArgs options)
@@ -1240,6 +1294,58 @@ internal static partial class Program
                 UpdatedAtUtc = now
             };
         });
+    }
+
+    private static async Task SaveSessionRunUpdate(
+        IWorkMapStore store,
+        WorkMapMissionRecord mission,
+        WorkMapWorkstreamRecord workstream,
+        WorkMapAgentSessionRecord session,
+        DateTimeOffset now,
+        bool attachIfMissing)
+    {
+        if (attachIfMissing)
+        {
+            await SaveSessionAttachment(store, mission, workstream, session, now, "Session run recorded.");
+            return;
+        }
+
+        await store.SaveAgentSessionAsync(session);
+        await UpdateSessionParents(store, session, now, "sessionRunUpdated", "Session run updated.");
+    }
+
+    private static async Task<WorkMapSessionRunOutcome> SaveSessionRunFailure(
+        IWorkMapStore store,
+        WorkMapMissionRecord mission,
+        WorkMapWorkstreamRecord workstream,
+        WorkMapAgentSessionRecord session,
+        string summary,
+        string? evidence)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var blocker = new WorkMapBlockerRecord
+        {
+            AtUtc = now,
+            Summary = summary,
+            Evidence = evidence
+        };
+        var events = session.Events.ToList();
+        events.Add(new WorkMapEventRecord
+        {
+            AtUtc = now,
+            Type = "sessionRunFailed",
+            Summary = summary
+        });
+
+        var blocked = session with
+        {
+            Status = "blocked",
+            UpdatedAtUtc = now,
+            Events = events,
+            Blocker = blocker
+        };
+        await SaveSessionRunUpdate(store, mission, workstream, blocked, now, attachIfMissing: false);
+        return new WorkMapSessionRunOutcome(blocked, blocker);
     }
 
     private static async Task UpdateSessionParents(
