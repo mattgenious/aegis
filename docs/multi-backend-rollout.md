@@ -14,7 +14,7 @@
 - [x] Implement adapter abstractions for all target backends.
 - [x] Wire all CLI session-oriented commands to route through the abstraction for codex/pi/copilot.
 - [x] Live-smoke `ask` against opencode, codex, and pi.
-- [ ] Live-smoke `ask` against copilot once GitHub Copilot CLI is installed and authenticated.
+- [x] Live-smoke Copilot backend through `work-map session run --backend copilot` after GitHub Copilot CLI install/auth.
 - [ ] Add automated end-to-end CLI command parity tests for backend-routing where credentials/backends are available.
 - [ ] Expand README command examples with live backend examples once command routing is validated in both adapters.
 - [x] Wire ask/status/last-summary through backends for codex/pi/copilot.
