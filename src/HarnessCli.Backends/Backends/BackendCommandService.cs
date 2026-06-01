@@ -99,7 +99,7 @@ public sealed class BackendCommandService
         }
 
         var anchorIndex = await GetLatestUserMessageIndexAsync(session);
-        var prompt = request.Async && !request.Wait
+        var prompt = request.Async
             ? request.Prompt with
             {
                 Options = request.Prompt.Options.SetItem("harness.async", "true")

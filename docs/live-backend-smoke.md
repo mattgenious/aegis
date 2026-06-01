@@ -2,13 +2,14 @@
 
 This project is an agent-facing CLI, so backend support is not considered verified by compilation alone. A backend smoke pass means `harness-cli ask` reached a live backend process, received an assistant response, and extracted a fresh `FINAL HANDOFF` summary.
 
-Last verified: 2026-05-23.
+Last verified: 2026-06-01.
 
 ## Source Of Truth Checked
 
 - OpenCode: `opencode --help`, `opencode serve --help`, npm package metadata for `opencode-ai@1.15.10` and `opencode-linux-x64@1.15.10`.
 - Codex: local `codex exec --help`; smoke host reported `codex-cli 0.133.0-alpha.1`.
 - Pi: local `pi --help` / `pi --mode json --help`; smoke host reported `pi 0.75.4`.
+- GitHub Copilot CLI: `copilot --help`; live smoke host resolved `copilot.exe` from the WinGet Links directory.
 
 ## Verified Commands
 
@@ -66,7 +67,25 @@ pi backend smoke passed"
 
 Result: `summary = "pi backend smoke passed"`.
 
+GitHub Copilot CLI:
+
+```bash
+dotnet src/HarnessCli/bin/Debug/net10.0/harness-cli.dll ask \
+  --backend copilot \
+  --directory /tmp/harness-cli-live-smoke/repo \
+  --timeout 240 \
+  --prompt "Smoke test. Do not run tools. Reply exactly with: FINAL HANDOFF
+copilot backend smoke passed"
+```
+
+Result: `summary = "copilot backend smoke passed"` through `harness-cli work-map session run --backend copilot --raw`; the work-map record reached `status = "handoff"` with a fresh assistant summary.
+
 ## Live Fixes From This Pass
+
+2026-06-01:
+
+- Added GitHub Copilot CLI backend support behind `--backend copilot`; initially blocked on missing local `copilot` binary.
+- Reverified GitHub Copilot CLI after installing it with WinGet; `copilot.exe` resolved on PATH and `work-map session run --backend copilot --raw` extracted `FINAL HANDOFF` successfully.
 
 2026-05-23:
 
