@@ -43,6 +43,7 @@ internal static partial class Program
             ["session", "run", ..] => await WorkMapSessionRun(store, options),
             ["session", "sync", ..] => await WorkMapSessionSync(store, options),
             ["session", "update", ..] => await WorkMapSessionUpdate(store, options),
+            ["session", "archive", ..] => await WorkMapSessionArchive(store, options),
             ["session", "handoff", ..] => await WorkMapSessionHandoff(store, options),
             ["session", "blocker", "set", ..] => await WorkMapSessionBlocker(store, options),
             ["session", "verify", ..] => await WorkMapVerificationAdd(store, options),
@@ -300,7 +301,7 @@ internal static partial class Program
         var sessionId = Require(options.SessionId, "--session");
         var backend = options.Backend is null
             ? InferBackendFromSessionId(sessionId) ?? "codex"
-            : ParseBackend(options.Backend).ToOptionValue();
+            : NormalizeLinkedBackend(options.Backend);
         var session = new WorkMapAgentSessionRecord
         {
             Id = sessionId,
@@ -340,13 +341,20 @@ internal static partial class Program
         var workstream = await RequireWorkstream(store, options.StreamId);
         EnsureMissionOwnsWorkstream(mission, workstream);
 
+        var resolved = ResolveWorkMapProfile(options);
+        var validationError = ValidateWorkMapSessionRun(resolved, options);
+        if (validationError is not null)
+        {
+            return Fail(validationError);
+        }
+
         var prompt = await ReadWorkMapPrompt(options);
         if (string.IsNullOrWhiteSpace(prompt))
         {
             return Fail("Prompt is required. Use --prompt or --prompt-file.");
         }
 
-        var outcome = await RunWorkMapSession(store, mission, workstream, options, prompt, options.Async, options.Wait);
+        var outcome = await RunWorkMapSession(store, mission, workstream, options, resolved, prompt, options.Async, options.Wait);
         if (outcome.Blocker is not null)
         {
             return Fail(outcome.Blocker.Evidence is null
@@ -372,12 +380,12 @@ internal static partial class Program
         WorkMapMissionRecord mission,
         WorkMapWorkstreamRecord workstream,
         WorkMapArgs options,
+        ResolvedAgentProfile resolved,
         string prompt,
         bool async,
         bool wait)
     {
         var now = DateTimeOffset.UtcNow;
-        var resolved = ResolveWorkMapProfile(options);
         using var http = CreateHttpClient(options.Server ?? DefaultServer);
         var client = new OpenCodeClient(http);
         var backend = CreateBackend(resolved.Backend, client);
@@ -617,7 +625,11 @@ internal static partial class Program
         WorkMapArgs options)
     {
         var now = DateTimeOffset.UtcNow;
-        var backendKind = ParseBackend(session.Backend);
+        if (!BackendKindExtensions.TryParse(session.Backend, out var backendKind))
+        {
+            return await SkipExternalSessionSync(store, session, now);
+        }
+
         using var http = CreateHttpClient(options.Server ?? DefaultServer);
         var backend = CreateBackend(backendKind, new OpenCodeClient(http));
         var backendSession = ToBackendSessionRecord(session, backendKind);
@@ -677,7 +689,7 @@ internal static partial class Program
     {
         var now = DateTimeOffset.UtcNow;
         var session = await RequireAgentSession(store, options.SessionId);
-        var backend = options.Backend is null ? null : ParseBackend(options.Backend).ToOptionValue();
+        var backend = options.Backend is null ? null : NormalizeLinkedBackend(options.Backend);
         var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
         {
             var events = current.Events.ToList();
@@ -705,6 +717,36 @@ internal static partial class Program
             };
         });
 
+        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        return 0;
+    }
+
+    private static async Task<int> WorkMapSessionArchive(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = await RequireAgentSession(store, options.SessionId);
+        var summary = string.IsNullOrWhiteSpace(options.Summary)
+            ? "Session archived."
+            : options.Summary;
+        var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
+        {
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "archived",
+                Summary = summary
+            });
+
+            return current with
+            {
+                Status = "archived",
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+
+        await UpdateSessionParents(store, updated, now, "sessionArchived", summary);
         WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
         return 0;
     }
@@ -984,9 +1026,18 @@ internal static partial class Program
 
         foreach (var workstream in workstreams)
         {
-            var streamSessions = SessionsForWorkstream(workstream, sessions);
+            var recordedStreamSessions = SessionsForWorkstream(workstream, sessions);
+            var archivedStreamSessionIds = recordedStreamSessions
+                .Where(session => IsArchivedStatus(session.Status))
+                .Select(session => session.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var streamSessions = recordedStreamSessions
+                .Where(session => !IsArchivedStatus(session.Status))
+                .ToList();
             var existingSessionCount = streamSessions.Count + workstream.SessionIds
-                .Count(id => streamSessions.All(session => !string.Equals(session.Id, id, StringComparison.OrdinalIgnoreCase)));
+                .Count(id =>
+                    !archivedStreamSessionIds.Contains(id)
+                    && streamSessions.All(session => !string.Equals(session.Id, id, StringComparison.OrdinalIgnoreCase)));
 
             if (!options.IncludeComplete && IsCompleteStatus(workstream.Status))
             {
@@ -1023,6 +1074,7 @@ internal static partial class Program
                     mission,
                     workstream,
                     options,
+                    resolved,
                     prompt,
                     async: resolved.Backend != BackendKind.Copilot,
                     wait: options.Wait);
@@ -1538,6 +1590,29 @@ internal static partial class Program
         return updated;
     }
 
+    private static async Task<WorkMapAgentSessionRecord> SkipExternalSessionSync(
+        IWorkMapStore store,
+        WorkMapAgentSessionRecord session,
+        DateTimeOffset now)
+    {
+        return await store.UpdateAgentSessionAsync(session.Id, current =>
+        {
+            var events = current.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "syncSkipped",
+                Summary = $"Skipped sync for external backend '{current.Backend}'."
+            });
+
+            return current with
+            {
+                Events = events,
+                UpdatedAtUtc = now
+            };
+        });
+    }
+
     private static WorkMapSupervisionCounts CountSupervisionStatuses(IReadOnlyList<WorkMapAgentSessionRecord> sessions)
     {
         var quiet = 0;
@@ -1588,6 +1663,11 @@ internal static partial class Program
 
     private static string ClassifySupervisionStatus(WorkMapAgentSessionRecord session)
     {
+        if (IsArchivedStatus(session.Status))
+        {
+            return "archived";
+        }
+
         if (session.FinalHandoff is not null || IsCompleteStatus(session.Status))
         {
             return "handoff";
@@ -1616,6 +1696,11 @@ internal static partial class Program
             || status.Equals("done", StringComparison.OrdinalIgnoreCase)
             || status.Equals("verified", StringComparison.OrdinalIgnoreCase)
             || status.Equals("closed", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsArchivedStatus(string? status) =>
+        status is not null
+        && (status.Equals("archived", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("archive", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsBlockedStatus(string? status) =>
         !string.IsNullOrWhiteSpace(status)
@@ -1795,6 +1880,42 @@ internal static partial class Program
         }
 
         return backend;
+    }
+
+    private static string? ValidateWorkMapSessionRun(ResolvedAgentProfile resolved, WorkMapArgs options)
+    {
+        return resolved.Backend == BackendKind.Copilot && options.Async
+            ? "Copilot backend does not support --async yet; run without --async/--wait for a blocking one-shot prompt."
+            : null;
+    }
+
+    private static string NormalizeLinkedBackend(string value)
+    {
+        if (BackendKindExtensions.TryParse(value, out var backend))
+        {
+            return backend.ToOptionValue();
+        }
+
+        var normalized = value.Trim().ToLowerInvariant().Replace('_', '-');
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new ArgumentException("Session backend cannot be empty.");
+        }
+
+        if (normalized.Length > 64)
+        {
+            throw new ArgumentException("Session backend labels must be 64 characters or fewer.");
+        }
+
+        foreach (var ch in normalized)
+        {
+            if (!char.IsAsciiLetterOrDigit(ch) && ch is not '-' and not '.')
+            {
+                throw new ArgumentException($"Unsupported session backend label '{value}'. Use a known backend or a lower-kebab external label such as manual, external, or shipper.");
+            }
+        }
+
+        return normalized;
     }
 
     private static async Task<string> ReadWorkMapPrompt(WorkMapArgs options)
