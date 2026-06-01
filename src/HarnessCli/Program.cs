@@ -1980,11 +1980,12 @@ Usage:
   harness-cli work-map stream add --mission ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
   harness-cli work-map stream update --mission ID --stream ID [--status STATUS] [--integration-action TEXT]
   harness-cli work-map stream delete --mission ID --stream ID [--force]
-  harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex|copilot] [--role TEXT]
+  harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex|copilot|manual|external] [--role TEXT]
   harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex|copilot] [--async] [--wait]
   harness-cli work-map session sync --session ID [--message-limit N]
   harness-cli work-map session sync --mission ID --all [--message-limit N]
   harness-cli work-map session update --session ID [--status STATUS] [--display-name NAME]
+  harness-cli work-map session archive --session ID [--summary TEXT]
   harness-cli work-map session handoff --session ID (--summary TEXT | --file FILE)
   harness-cli work-map session blocker set --session ID --summary TEXT [--evidence TEXT]
   harness-cli work-map session verify --session ID --kind KIND --result pass|fail|skip [--summary TEXT]
@@ -1999,6 +2000,8 @@ Notes:
   store export/import writes portable JSON snapshots; the runtime store remains a JSON directory.
   session run links the work-map session before posting the backend prompt, so long-running
   workers are visible to show, supervise, and the observer UI while they are still active.
+  session link/update accept manual external backend labels for non-harness workers such as
+  shipper, background, human, or external coordinator sessions; sync skips those records.
   serve starts an optional read-only React observer UI over the same records and logs each
   request to stderr. Pass --access-log FILE to append durable JSONL access records.
   For Tailscale Serve without firewall changes, keep the default loopback bind and run

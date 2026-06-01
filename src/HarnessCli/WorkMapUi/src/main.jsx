@@ -148,13 +148,15 @@ function Overview({ snapshot, navigate }) {
         .sort((left, right) => dateValue(right.session.updatedAtUtc) - dateValue(left.session.updatedAtUtc)),
     [bundles]
   );
-  const activeSessions = sessions.filter(({ session }) => !['handoff', 'blocked', 'done', 'complete'].includes(normalize(session.status))).length;
+  const visibleSessions = sessions.filter(({ session }) => !isArchived(session.status));
+  const archivedSessions = sessions.length - visibleSessions.length;
+  const activeSessions = visibleSessions.filter(({ session }) => !['handoff', 'blocked', 'done', 'complete'].includes(normalize(session.status))).length;
 
   return (
     <div className="page-stack">
       <section className="summary-grid">
         <StatCard label="Missions" value={bundles.length} icon={GitBranch} />
-        <StatCard label="Sessions" value={sessions.length} icon={UsersRound} />
+        <StatCard label="Sessions" value={visibleSessions.length} icon={UsersRound} />
         <StatCard label="Active" value={activeSessions} icon={Activity} />
         <StatCard label="Store" value={shortPath(snapshot?.dataDirectory)} icon={SquareTerminal} compact />
       </section>
@@ -174,12 +176,12 @@ function Overview({ snapshot, navigate }) {
         )}
       </Section>
 
-      <Section title="Recent Sessions" aside={sessions.length > 0 ? `${sessions.length} linked` : undefined}>
-        {sessions.length === 0 ? (
+      <Section title="Recent Sessions" aside={visibleSessions.length > 0 ? `${visibleSessions.length} linked${archivedSessions > 0 ? `, ${archivedSessions} archived` : ''}` : undefined}>
+        {visibleSessions.length === 0 ? (
           <EmptyState title="No sessions linked" body="Linked or run sessions will appear after work-map records are written." />
         ) : (
           <div className="card-grid">
-            {sessions.slice(0, 12).map(({ session, mission, workstream }) => (
+            {visibleSessions.slice(0, 12).map(({ session, mission, workstream }) => (
               <SessionCard
                 key={session.id}
                 session={session}
@@ -200,6 +202,8 @@ function MissionDetail({ bundle, navigate }) {
   const mission = bundle?.mission;
   const workstreams = bundle?.workstreams ?? [];
   const sessions = bundle?.sessions ?? [];
+  const visibleSessions = sessions.filter((session) => !isArchived(session.status));
+  const archivedSessions = sessions.filter((session) => isArchived(session.status));
   const sessionTimeline = sessions.flatMap((session) =>
     (session.events ?? []).map((event) => ({
       atUtc: event.atUtc,
@@ -251,9 +255,9 @@ function MissionDetail({ bundle, navigate }) {
       />
 
       {tab === 'sessions' ? (
-        <Section title="Sessions" aside={`${sessions.length} linked`}>
+        <Section title="Sessions" aside={`${visibleSessions.length} linked${archivedSessions.length > 0 ? `, ${archivedSessions.length} archived` : ''}`}>
           <div className="card-grid">
-            {sessions.map((session) => (
+            {visibleSessions.map((session) => (
               <SessionCard
                 key={session.id}
                 session={session}
@@ -264,7 +268,23 @@ function MissionDetail({ bundle, navigate }) {
               />
             ))}
           </div>
-          {sessions.length === 0 ? <EmptyState title="No sessions" body="No session records are linked to this mission." /> : null}
+          {visibleSessions.length === 0 ? <EmptyState title="No sessions" body="No active session records are linked to this mission." /> : null}
+          {archivedSessions.length > 0 ? (
+            <Section title="Archived Sessions" aside={`${archivedSessions.length} archived`}>
+              <div className="card-grid">
+                {archivedSessions.map((session) => (
+                  <SessionCard
+                    key={session.id}
+                    session={session}
+                    mission={mission}
+                    workstream={workstreams.find((item) => item.id === session.workstreamId)}
+                    navigate={navigate}
+                    detailed
+                  />
+                ))}
+              </div>
+            </Section>
+          ) : null}
         </Section>
       ) : null}
 
@@ -383,7 +403,8 @@ function SessionDetail({ detail, navigate }) {
 
 function MissionCard({ bundle, navigate }) {
   const { mission, workstreams = [], sessions = [] } = bundle;
-  const latestSession = [...sessions].sort((left, right) => dateValue(right.updatedAtUtc) - dateValue(left.updatedAtUtc))[0];
+  const visibleSessions = sessions.filter((session) => !isArchived(session.status));
+  const latestSession = [...visibleSessions].sort((left, right) => dateValue(right.updatedAtUtc) - dateValue(left.updatedAtUtc))[0];
   return (
     <Card asButton onClick={() => navigate(`/missions/${encodeURIComponent(mission.id)}`)}>
       <div className="card-heading">
@@ -397,7 +418,7 @@ function MissionCard({ bundle, navigate }) {
       {mission.nextAction ? <p className="next-line">{mission.nextAction}</p> : null}
       <div className="mini-stats">
         <span>{workstreams.length} streams</span>
-        <span>{sessions.length} sessions</span>
+        <span>{visibleSessions.length} sessions</span>
         <span>{(mission.evidence ?? []).length} evidence</span>
       </div>
       {latestSession ? (
@@ -776,12 +797,16 @@ function statusTone(status) {
   if (['handoff', 'done', 'complete', 'pass', 'passed'].includes(value)) return 'success';
   if (['blocked', 'failed', 'fail', 'error'].includes(value)) return 'danger';
   if (['waiting', 'queued', 'running', 'in-progress', 'needs-review'].includes(value)) return 'info';
-  if (['planned', 'linked', 'skip', 'skipped'].includes(value)) return 'warning';
+  if (['planned', 'linked', 'skip', 'skipped', 'archived'].includes(value)) return 'warning';
   return 'neutral';
 }
 
 function normalize(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function isArchived(status) {
+  return ['archived', 'archive'].includes(normalize(status));
 }
 
 function firstLine(value) {

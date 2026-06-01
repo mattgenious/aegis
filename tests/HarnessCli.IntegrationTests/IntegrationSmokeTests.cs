@@ -141,6 +141,93 @@ public class IntegrationSmokeTests
     }
 
     [Fact]
+    public async Task WorkMapSessionLinkAcceptsExternalBackendAndSyncSkipsIt()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "External worker")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Background shipper")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            var linked = JsonNode.Parse((await RunCli(
+                workMapStore,
+                "work-map",
+                "session",
+                "link",
+                "--mission",
+                missionId,
+                "--stream",
+                streamId,
+                "--session",
+                "synthesis-shipper",
+                "--backend",
+                "Shipper",
+                "--status",
+                "running")).Stdout)!;
+
+            Assert.Equal("shipper", linked["backend"]!.GetValue<string>());
+            Assert.Equal("running", linked["status"]!.GetValue<string>());
+
+            var synced = JsonNode.Parse((await RunCli(workMapStore, "work-map", "session", "sync", "--mission", missionId, "--all")).Stdout)!.AsArray();
+            Assert.Single(synced);
+            Assert.Equal("running", synced[0]!["status"]!.GetValue<string>());
+            Assert.Equal("shipper", synced[0]!["backend"]!.GetValue<string>());
+            Assert.Contains(synced[0]!["events"]!.AsArray(), item => item?["type"]?.GetValue<string>() == "syncSkipped");
+
+            var supervision = JsonNode.Parse((await RunCli(workMapStore, "work-map", "supervise", "--mission", missionId, "--max-runs", "1")).Stdout)!;
+            Assert.Equal(1, supervision["active"]!.GetValue<int>());
+            Assert.Equal(0, supervision["blocked"]!.GetValue<int>());
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+        }
+    }
+
+    [Fact]
+    public async Task WorkMapLaunchIgnoresArchivedSessionsWhenFindingEligibleStreams()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Relaunch")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Retry slice")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+            await RunCli(
+                workMapStore,
+                "work-map",
+                "session",
+                "link",
+                "--mission",
+                missionId,
+                "--stream",
+                streamId,
+                "--session",
+                "stale-shipper",
+                "--backend",
+                "shipper",
+                "--status",
+                "blocked");
+            await RunCli(workMapStore, "work-map", "session", "archive", "--session", "stale-shipper");
+
+            var launch = JsonNode.Parse((await RunCli(workMapStore, "work-map", "launch", "--mission", missionId, "--dry-run")).Stdout)!;
+
+            Assert.Equal(1, launch["eligible"]!.GetValue<int>());
+            Assert.Equal(1, launch["launchedCount"]!.GetValue<int>());
+            Assert.Equal(0, launch["skippedCount"]!.GetValue<int>());
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+        }
+    }
+
+    [Fact]
     public async Task WorkMapSessionRunAttachesSessionBeforeBlockingCodexCompletes()
     {
         var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -286,6 +373,49 @@ public class IntegrationSmokeTests
     }
 
     [Fact]
+    public async Task WorkMapSessionRunRejectsCopilotAsyncBeforeCreatingSessionRecord()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            Directory.CreateDirectory(workspace);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Copilot async")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Rejected async")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            var result = await RunCliAllowFailure(
+                workMapStore,
+                "work-map",
+                "session",
+                "run",
+                "--mission",
+                missionId,
+                "--stream",
+                streamId,
+                "--backend",
+                "copilot",
+                "--directory",
+                workspace,
+                "--prompt",
+                "fake copilot",
+                "--async");
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("does not support --async", result.Stderr);
+            var sessionsDirectory = Path.Combine(workMapStore, "sessions");
+            Assert.True(!Directory.Exists(sessionsDirectory) || !Directory.EnumerateFiles(sessionsDirectory, "*.json").Any());
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+        }
+    }
+
+    [Fact]
     public async Task WorkMapServeWritesJsonlAccessLog()
     {
         var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -345,6 +475,8 @@ public class IntegrationSmokeTests
             var help = await RunCli(workMapStore, "help", "work-map");
 
             Assert.Contains("--access-log FILE", help.Stdout);
+            Assert.Contains("manual external backend labels", help.Stdout);
+            Assert.Contains("session archive --session ID", help.Stdout);
             Assert.Contains("tailscale serve --bg http://127.0.0.1:4896/", help.Stdout);
         }
         finally
@@ -356,7 +488,19 @@ public class IntegrationSmokeTests
     private static Task<CliResult> RunCli(string workMapStore, params string[] args) =>
         RunCli(workMapStore, null, args);
 
+    private static Task<CliResult> RunCliAllowFailure(string workMapStore, params string[] args) =>
+        RunCli(workMapStore, null, assertSuccess: false, args);
+
     private static async Task<CliResult> RunCli(string workMapStore, Action<ProcessStartInfo>? configureStartInfo, params string[] args)
+    {
+        return await RunCli(workMapStore, configureStartInfo, assertSuccess: true, args);
+    }
+
+    private static async Task<CliResult> RunCli(
+        string workMapStore,
+        Action<ProcessStartInfo>? configureStartInfo,
+        bool assertSuccess,
+        params string[] args)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -393,7 +537,11 @@ public class IntegrationSmokeTests
         }
 
         var result = new CliResult(process.ExitCode, await stdout, await stderr);
-        Assert.True(result.ExitCode == 0, $"harness-cli failed with exit {result.ExitCode}.\nSTDOUT:\n{result.Stdout}\nSTDERR:\n{result.Stderr}");
+        if (assertSuccess)
+        {
+            Assert.True(result.ExitCode == 0, $"harness-cli failed with exit {result.ExitCode}.\nSTDOUT:\n{result.Stdout}\nSTDERR:\n{result.Stderr}");
+        }
+
         return result;
     }
 
