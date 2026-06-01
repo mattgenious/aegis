@@ -6,11 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>HarnessCli</RootNamespace>
     <PackageId>HarnessCli.Backends</PackageId>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Authors>mattgenious</Authors>
-    <Description>Reusable OpenCode, Codex, and Pi backend adapters plus orchestration services for harness-cli.</Description>
+    <Description>Reusable OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters plus orchestration services for harness-cli.</Description>
     <RepositoryUrl>https://github.com/mattgenious/harness-cli</RepositoryUrl>
-    <PackageTags>agents;opencode;codex;pi;automation</PackageTags>
+    <PackageTags>agents;opencode;codex;pi;copilot;automation</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 

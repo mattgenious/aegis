@@ -72,8 +72,8 @@ public class CommandRulesTests
 
         Assert.Contains("<PackageId>HarnessCli.Core</PackageId>", coreProject);
         Assert.Contains("<PackageId>HarnessCli.Backends</PackageId>", backendProject);
-        Assert.Contains("<Version>0.1.1</Version>", coreProject);
-        Assert.Contains("<Version>0.1.1</Version>", backendProject);
+        Assert.Contains("<Version>0.1.2</Version>", coreProject);
+        Assert.Contains("<Version>0.1.2</Version>", backendProject);
         Assert.Contains("PackageCopyToOutput=\"true\"", coreProject);
         Assert.Contains("PackageCopyToOutput=\"true\"", backendProject);
     }
@@ -87,6 +87,7 @@ public class CommandRulesTests
         Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("delegation", "opencode.md"), StringComparison.Ordinal));
         Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("delegation", "codex.md"), StringComparison.Ordinal));
         Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("delegation", "pi.md"), StringComparison.Ordinal));
+        Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("delegation", "copilot.md"), StringComparison.Ordinal));
         Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("spawn", "ship-target.md"), StringComparison.Ordinal));
         Assert.Contains(promptFiles, path => path.EndsWith(Path.Combine("watch", "default.md"), StringComparison.Ordinal));
 

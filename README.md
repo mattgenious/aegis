@@ -5,7 +5,7 @@
 ## Layout
 
 - `src/HarnessCli.Core/` – reusable contracts, session registry infrastructure, state normalization, and prompt rendering
-- `src/HarnessCli.Backends/` – reusable OpenCode, Codex, and Pi backend adapters
+- `src/HarnessCli.Backends/` – reusable OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters
 - `src/HarnessCli/` – CLI application source
 - `tests/HarnessCli.UnitTests/` – unit tests
 - `tests/HarnessCli.IntegrationTests/` – integration tests
@@ -133,6 +133,7 @@ Create a mission, attach clone-backed workstreams, fan out worker sessions, and 
 harness-cli work-map create --title "Ship search fixes" --intent "Coordinate independent repo slices"
 harness-cli work-map stream add --mission mission-... --name "API slice" --role implementer --clone E:\agents\workspaces\api-search-fix
 harness-cli work-map launch --mission mission-... --backend codex --prompt-file worker-context.md
+harness-cli work-map session run --mission mission-... --stream stream-... --backend copilot --prompt-file worker-context.md
 harness-cli work-map show --mission mission-... --format html --output work-map.html
 harness-cli work-map serve --host 127.0.0.1 --port 4896 --access-log .\work-map-access.jsonl
 ```
@@ -192,28 +193,30 @@ The CLI now includes backend adapters for:
 - `opencode` (default): existing OpenCode HTTP API path with full command coverage (`ask`, `spawn`, `status`, `wait`, `watch`, `tail`, etc.).
 - `codex`: local command-path adapter (`codex`) with explicit session-local state files and JSON message extraction.
 - `pi`: local command-path adapter (`pi`) using JSON event output (`--mode json`) and message reconstruction.
+- `copilot`: local GitHub Copilot CLI adapter (`copilot`) using `--prompt`, `--output-format=json`, and file-backed harness state. Native Copilot async/resume is not claimed yet; install and authenticate Copilot CLI before live use.
 
 Current runtime support status:
 
-| Command | opencode | codex | pi |
-|---|---|---|---|
-| `new` | ✅ | ✅ | ✅ |
-| `latest` | ✅ | ✅ | ✅ |
-| `ask` | ✅ | ✅ | ✅ |
-| `messages` | ✅ | ✅ | ✅ |
-| `wait` | ✅ | ✅ | ✅ |
-| `last-summary` | ✅ | ✅ | ✅ |
-| `status` | ✅ | ✅ | ✅ |
-| `abort` | ✅ | ✅ | ✅ |
+| Command | opencode | codex | pi | copilot |
+|---|---|---|---|---|
+| `new` | ✅ | ✅ | ✅ | ✅ |
+| `latest` | ✅ | ✅ | ✅ | ✅ |
+| `ask` | ✅ | ✅ | ✅ | ✅ |
+| `messages` | ✅ | ✅ | ✅ | ✅ |
+| `wait` | ✅ | ✅ | ✅ | ✅ |
+| `last-summary` | ✅ | ✅ | ✅ | ✅ |
+| `status` | ✅ | ✅ | ✅ | ✅ |
+| `abort` | ✅ | ✅ | ✅ | ⚙️ |
 
 Legend: ✅ command fully wired in this release, ⚙️ adapter exists and is tested but full command wiring is the next integration step.
 
 ## Migration Notes
 
 - Default backend remains `opencode`; existing invocation patterns do not change.
-- `--backend` currently accepts `opencode`, `codex`, and `pi` and is validated at parse time.
+- `--backend` currently accepts `opencode`, `codex`, `pi`, and `copilot` and is validated at parse time.
 - OpenCode semantics remain the compatibility baseline for prompt wrapping, handoff markers, and summary extraction behavior.
-- Codex and Pi adapters use local persistent backend state outside the target repository by default, under the platform app data directory or `HARNESS_CLI_BACKEND_STATE_DIR` when set. This avoids dirtying the repo and prevents delegated agents from deleting their own session transcript.
+- Codex, Pi, and Copilot adapters use local persistent backend state outside the target repository by default, under the platform app data directory or `HARNESS_CLI_BACKEND_STATE_DIR` when set. This avoids dirtying the repo and prevents delegated agents from deleting their own session transcript.
+- The Copilot adapter runs one blocking non-interactive Copilot CLI process per prompt. It passes `--prompt <text> --output-format=json --stream=off --no-ask-user --share <state>.share.md`, forwards `--model` and `--agent` when provided, and does not default to broad tool permissions. `--async` is rejected for Copilot until a detached/resumable flow is implemented. Use `--copilot-allow-tool`, `--copilot-allow-url`, or explicit `--copilot-allow-all` when a Copilot worker needs additional permissions. Set `HARNESS_CLI_COPILOT_BINARY` to override the `copilot` executable path for tests or non-standard installs.
 - Work-map mission/session history uses a separate provider-neutral store under `HARNESS_CLI_WORK_MAP_DIR` or app data `harness-cli/work-map`. This store is safe for optional observer UIs and future SQLite migration without changing the conceptual model. JSON records are updated with record-level locks and atomic replacement; observer UIs should read the records but should not be required for harness-cli execution.
 - Use `--raw` when you want a backend to receive prompt text verbatim.
 - See [docs/multi-backend-rollout.md](./docs/multi-backend-rollout.md) for staged parity status and rollout checklist.
