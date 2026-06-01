@@ -217,6 +217,75 @@ public class IntegrationSmokeTests
     }
 
     [Fact]
+    public async Task WorkMapSessionRunForwardsCopilotPermissionFlags()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var fakeBin = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            Directory.CreateDirectory(workspace);
+            Directory.CreateDirectory(fakeBin);
+            var argsPath = CreateFakeCopilot(fakeBin);
+
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Copilot flags")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Copilot slice")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            await RunCli(
+                workMapStore,
+                startInfo =>
+                {
+                    var path = startInfo.Environment.TryGetValue("PATH", out var existingPath)
+                        ? existingPath
+                        : Environment.GetEnvironmentVariable("PATH");
+                    startInfo.Environment["PATH"] = fakeBin + Path.PathSeparator + path;
+                    startInfo.Environment["HARNESS_CLI_COPILOT_BINARY"] = OperatingSystem.IsWindows()
+                        ? Path.Combine(fakeBin, "fake-copilot.ps1")
+                        : Path.Combine(fakeBin, "copilot");
+                },
+                "work-map",
+                "session",
+                "run",
+                "--mission",
+                missionId,
+                "--stream",
+                streamId,
+                "--backend",
+                "copilot",
+                "--directory",
+                workspace,
+                "--prompt",
+                "fake copilot",
+                "--copilot-allow-tool",
+                "Edit",
+                "--copilot-allow-tool",
+                "Bash",
+                "--copilot-allow-url",
+                "https://github.com",
+                "--copilot-allow-all",
+                "--timeout",
+                "12");
+
+            var args = await File.ReadAllTextAsync(argsPath);
+            Assert.Contains("--allow-tool", args);
+            Assert.Contains("Edit", args);
+            Assert.Contains("Bash", args);
+            Assert.Contains("--allow-url", args);
+            Assert.Contains("https://github.com", args);
+            Assert.Contains("--allow-all", args);
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+            if (Directory.Exists(fakeBin)) Directory.Delete(fakeBin, true);
+        }
+    }
+
+    [Fact]
     public async Task WorkMapServeWritesJsonlAccessLog()
     {
         var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -284,7 +353,10 @@ public class IntegrationSmokeTests
         }
     }
 
-    private static async Task<CliResult> RunCli(string workMapStore, params string[] args)
+    private static Task<CliResult> RunCli(string workMapStore, params string[] args) =>
+        RunCli(workMapStore, null, args);
+
+    private static async Task<CliResult> RunCli(string workMapStore, Action<ProcessStartInfo>? configureStartInfo, params string[] args)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -303,6 +375,7 @@ public class IntegrationSmokeTests
         startInfo.Environment["HARNESS_CLI_WORK_MAP_DIR"] = workMapStore;
         startInfo.Environment["HARNESS_CLI_SESSION_DIR"] = Path.Combine(workMapStore, "session-registry");
         startInfo.Environment["HARNESS_CLI_BACKEND_STATE_DIR"] = Path.Combine(workMapStore, "backend-state");
+        configureStartInfo?.Invoke(startInfo);
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start harness-cli test process.");
         process.StandardInput.Close();
@@ -390,6 +463,43 @@ public class IntegrationSmokeTests
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
             | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
             | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+    }
+
+    private static string CreateFakeCopilot(string fakeBin)
+    {
+        var argsPath = Path.Combine(fakeBin, "copilot-args.txt");
+        const string outputLine = "FINAL HANDOFF\\nfake copilot done";
+        if (OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(
+                Path.Combine(fakeBin, "fake-copilot.ps1"),
+                string.Join(
+                    Environment.NewLine,
+                    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+                    "[string]::Join(' ', $args) | Set-Content -LiteralPath \"" + argsPath + "\"",
+                    "Write-Output '" + outputLine + "'",
+                    "exit 0"));
+            File.WriteAllText(
+                Path.Combine(fakeBin, "copilot.cmd"),
+                string.Join(Environment.NewLine, "@echo off", "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-copilot.ps1\" %*"));
+            return argsPath;
+        }
+
+        var executablePath = Path.Combine(fakeBin, "copilot");
+        File.WriteAllText(
+            executablePath,
+            string.Join(
+                "\n",
+                "#!/bin/sh",
+                "printf '%s\\n' \"$*\" > '" + argsPath.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'",
+                "printf '%s\\n' '" + outputLine + "'",
+                "exit 0"));
+        File.SetUnixFileMode(
+            executablePath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        return argsPath;
     }
 
     private static async Task<JsonNode> WaitForMissionSession(string workMapStore, string missionId, Process process)

@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>HarnessCli</RootNamespace>
     <PackageId>HarnessCli.Core</PackageId>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Authors>mattgenious</Authors>
     <Description>Reusable contracts, session registry infrastructure, state normalization, and prompt rendering for harness-cli agent backends.</Description>
     <RepositoryUrl>https://github.com/mattgenious/harness-cli</RepositoryUrl>

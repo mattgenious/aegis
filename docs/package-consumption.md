@@ -5,7 +5,7 @@
 ## Packages
 
 - `HarnessCli.Core`: shared contracts, session registry infrastructure, state normalization, and prompt rendering.
-- `HarnessCli.Backends`: OpenCode, Codex, and Pi backend adapters plus backend command orchestration.
+- `HarnessCli.Backends`: OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters plus backend command orchestration.
 
 The CLI executable is `harness-cli` and references the same libraries. `opencode-harness-cli` is a migration alias for installed or published command shims, not a separate application identity.
 
@@ -22,7 +22,7 @@ Reference from a consumer project:
 
 ```bash
 dotnet add package HarnessCli.Backends \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --source /absolute/path/to/harness-cli/artifacts/packages
 ```
 
@@ -32,7 +32,7 @@ Prompt markdown files are packed as content files and copied to the consumer out
 
 ## Baton-Facing API Shape
 
-Consumers should depend on `IAgentHarness` rather than OpenCode HTTP, Codex CLI, or Pi CLI details:
+Consumers should depend on `IAgentHarness` rather than OpenCode HTTP, Codex CLI, Pi CLI, or GitHub Copilot CLI details:
 
 ```csharp
 AgentRunResult result = await harness.AskAsync(new AgentRunRequest

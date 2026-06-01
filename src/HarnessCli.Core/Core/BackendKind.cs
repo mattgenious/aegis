@@ -4,7 +4,8 @@ public enum BackendKind
 {
     Opencode,
     Codex,
-    Pi
+    Pi,
+    Copilot
 }
 
 public static class BackendKindExtensions
@@ -17,7 +18,8 @@ public static class BackendKindExtensions
             return false;
         }
 
-        backendKind = value.Trim().ToLowerInvariant() switch
+        var normalized = value.Trim().ToLowerInvariant();
+        backendKind = normalized switch
         {
             "opencode" => BackendKind.Opencode,
             "open-code" => BackendKind.Opencode,
@@ -25,17 +27,20 @@ public static class BackendKindExtensions
             "pi" => BackendKind.Pi,
             "pi.dev" => BackendKind.Pi,
             "pidev" => BackendKind.Pi,
+            "copilot" => BackendKind.Copilot,
+            "github-copilot" => BackendKind.Copilot,
+            "githubcopilot" => BackendKind.Copilot,
             _ => BackendKind.Opencode
         };
 
-        return value is "opencode" or "open-code" or "codex" or "pi" or "pi.dev" or "pidev";
+        return normalized is "opencode" or "open-code" or "codex" or "pi" or "pi.dev" or "pidev" or "copilot" or "github-copilot" or "githubcopilot";
     }
 
     public static string ToOptionValue(this BackendKind backendKind) => backendKind switch
     {
         BackendKind.Codex => "codex",
         BackendKind.Pi => "pi",
+        BackendKind.Copilot => "copilot",
         _ => "opencode"
     };
 }
-
