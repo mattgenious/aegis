@@ -92,7 +92,12 @@ public sealed class BackendCommandService
 
     public async Task<BackendAskResult> AskAsync(BackendAskRequest request)
     {
-        var session = await GetOrCreateSessionAsync(request);
+        var (session, created) = await GetOrCreateSessionAsync(request);
+        if (created && request.SessionCreated is not null)
+        {
+            await request.SessionCreated(session);
+        }
+
         var anchorIndex = await GetLatestUserMessageIndexAsync(session);
         var prompt = request.Async && !request.Wait
             ? request.Prompt with
@@ -148,17 +153,18 @@ public sealed class BackendCommandService
         return await _backend.ExtractSummaryAsync(session, marker, anchorIndex);
     }
 
-    private async Task<SessionRecord> GetOrCreateSessionAsync(BackendAskRequest request)
+    private async Task<(SessionRecord Session, bool Created)> GetOrCreateSessionAsync(BackendAskRequest request)
     {
         if (!string.IsNullOrWhiteSpace(request.SessionId))
         {
-            return await ResolveSessionAsync(request.SessionId);
+            return (await ResolveSessionAsync(request.SessionId), false);
         }
 
-        return await CreateSessionAsync(new CreateBackendSessionRequest(
+        var created = await CreateSessionAsync(new CreateBackendSessionRequest(
             request.Title,
             request.ParentSessionId,
             request.Directory));
+        return (created, true);
     }
 
     private async Task<SessionRecord> ResolveSessionAsync(string sessionId)
@@ -225,7 +231,8 @@ public sealed record BackendAskRequest(
     PromptRequest Prompt,
     bool Async,
     bool Wait,
-    TimeSpan Timeout);
+    TimeSpan Timeout,
+    Func<SessionRecord, Task>? SessionCreated = null);
 
 public sealed record BackendAskResult(SessionRecord Session, SummaryResult? Summary, CommandResult PostResult);
 

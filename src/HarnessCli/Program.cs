@@ -1819,7 +1819,7 @@ Usage:
   harness-cli work-map stream add --mission ID --name NAME [--clone PATH]
   harness-cli work-map launch --mission ID [--dry-run]
   harness-cli work-map supervise --mission ID [--launch-missing] [--until-idle]
-  harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md
+  harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md [--async] [--wait]
   harness-cli work-map session sync --mission ID --all
   harness-cli work-map session handoff --session ID --summary TEXT
   harness-cli work-map show --mission ID --format json|md|html
@@ -1956,7 +1956,7 @@ Usage:
   harness-cli work-map stream update --mission ID --stream ID [--status STATUS] [--integration-action TEXT]
   harness-cli work-map stream delete --mission ID --stream ID [--force]
   harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex] [--role TEXT]
-  harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex]
+  harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex] [--async] [--wait]
   harness-cli work-map session sync --session ID [--message-limit N]
   harness-cli work-map session sync --mission ID --all [--message-limit N]
   harness-cli work-map session update --session ID [--status STATUS] [--display-name NAME]
@@ -1972,6 +1972,8 @@ Notes:
   launch fans out from an existing map and uses Codex by default unless --backend overrides it.
   supervise syncs mission sessions and reports quiet, active, blocked, and handoff counts.
   store export/import writes portable JSON snapshots; the runtime store remains a JSON directory.
+  session run links the work-map session before posting the backend prompt, so long-running
+  workers are visible to show, supervise, and the observer UI while they are still active.
   serve starts an optional read-only React observer UI over the same records and logs each
   request to stderr. Pass --access-log FILE to append durable JSONL access records.
   For Tailscale Serve without firewall changes, keep the default loopback bind and run
