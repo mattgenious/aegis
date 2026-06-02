@@ -20,6 +20,12 @@ internal static partial class Program
         }
 
         var options = WorkMapArgs.Parse(args);
+        if (options.Help)
+        {
+            PrintWorkMapHelp();
+            return 0;
+        }
+
         var store = new FileWorkMapStore();
 
         return options.Positionals switch
@@ -130,6 +136,7 @@ internal static partial class Program
         });
 
         WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        WriteNextCommandHints(NextCommandHintContext.ForMission(updated.Id));
         return 0;
     }
 
@@ -196,6 +203,7 @@ internal static partial class Program
         });
 
         WriteJson(JsonSerializer.SerializeToNode(workstream, JsonOptions));
+        WriteNextCommandHints(NextCommandHintContext.ForWorkstream(workstream));
         return 0;
     }
 
@@ -315,6 +323,7 @@ internal static partial class Program
             Provider = options.Provider,
             Model = options.Model,
             Variant = options.Variant,
+            Agent = options.Agent,
             Directory = NormalizeOptionalPath(options.Directory) ?? workstream.ClonePath,
             Status = options.Status ?? "linked",
             CreatedAtUtc = now,
@@ -369,8 +378,17 @@ internal static partial class Program
             ["sessionID"] = outcome.Session.Id,
             ["displayName"] = outcome.Session.DisplayName,
             ["backend"] = outcome.Session.Backend,
+            ["backendSessionID"] = outcome.Session.BackendSessionId,
+            ["requestedBackend"] = options.Backend,
+            ["provider"] = outcome.Session.Provider,
+            ["model"] = outcome.Session.Model,
+            ["variant"] = outcome.Session.Variant,
+            ["agent"] = outcome.Session.Agent,
+            ["directory"] = outcome.Session.Directory,
+            ["title"] = outcome.Session.Title,
             ["status"] = outcome.Session.Status,
-            ["summary"] = outcome.Session.FinalHandoff?.Text
+            ["summary"] = outcome.Session.FinalHandoff?.Text,
+            ["nextCommands"] = JsonSerializer.SerializeToNode(BuildSessionRunNextCommands(mission.Id, outcome.Session), JsonOptions)
         });
         return 0;
     }
@@ -439,6 +457,7 @@ internal static partial class Program
                         Provider = resolved.ModelProvider,
                         Model = resolved.Model,
                         Variant = resolved.Variant,
+                        Agent = resolved.Agent,
                         Directory = directory,
                         Status = "running",
                         CreatedAtUtc = sessionRecord.CreatedAtUtc,
@@ -534,6 +553,7 @@ internal static partial class Program
                 Provider = resolved.ModelProvider,
                 Model = resolved.Model,
                 Variant = resolved.Variant,
+                Agent = resolved.Agent,
                 Directory = directory,
                 Status = status,
                 CreatedAtUtc = attachedSession?.CreatedAtUtc ?? now,
@@ -710,6 +730,7 @@ internal static partial class Program
                 Provider = options.Provider ?? current.Provider,
                 Model = options.Model ?? current.Model,
                 Variant = options.Variant ?? current.Variant,
+                Agent = options.Agent ?? current.Agent,
                 Directory = options.Directory is null ? current.Directory : NormalizeOptionalPath(options.Directory),
                 Status = options.Status ?? current.Status,
                 Events = events,
@@ -917,6 +938,11 @@ internal static partial class Program
         }
 
         WriteJson(JsonSerializer.SerializeToNode(evidence, JsonOptions));
+        WriteNextCommandHints(new NextCommandHintContext(
+            MissionId: mission.Id,
+            StreamId: options.StreamId,
+            Directory: null,
+            Role: null));
         return 0;
     }
 
@@ -976,17 +1002,19 @@ internal static partial class Program
 
         if (IsMarkdown(options.Format))
         {
-            await WriteWorkMapOutput(BuildWorkMapMarkdown(bundle), options);
+            await WriteWorkMapOutput(AppendNextCommandHints(BuildWorkMapMarkdown(bundle), NextCommandHintContext.ForMission(mission.Id)), options);
             return 0;
         }
 
         if (options.Format.Equals("html", StringComparison.OrdinalIgnoreCase))
         {
             await WriteWorkMapOutput(BuildWorkMapHtml(bundle), options);
+            WriteNextCommandHints(NextCommandHintContext.ForMission(mission.Id));
             return 0;
         }
 
         WriteJson(JsonSerializer.SerializeToNode(bundle, JsonOptions));
+        WriteNextCommandHints(NextCommandHintContext.ForMission(mission.Id));
         return 0;
     }
 
@@ -1859,7 +1887,7 @@ internal static partial class Program
             backend = ParseBackend(options.Backend);
         }
 
-        return new AgentProfileResolver(DefaultAgentConfiguration with { DefaultBackend = BackendKind.Codex }).Resolve(
+        var resolved = new AgentProfileResolver(DefaultAgentConfiguration with { DefaultBackend = BackendKind.Codex }).Resolve(
             new AgentProfileSelection
             {
                 Profile = options.Profile,
@@ -1870,6 +1898,16 @@ internal static partial class Program
                 System = options.System,
                 Timeout = options.TimeoutWasProvided ? TimeSpan.FromSeconds(options.TimeoutSeconds) : null
             });
+
+        return ResolveWorkMapBackendCompatibility(resolved);
+    }
+
+    private static ResolvedAgentProfile ResolveWorkMapBackendCompatibility(ResolvedAgentProfile resolved)
+    {
+        return resolved.Backend == BackendKind.Copilot
+               && string.Equals(resolved.ModelProvider, "github-copilot", StringComparison.OrdinalIgnoreCase)
+            ? resolved with { Backend = BackendKind.Opencode }
+            : resolved;
     }
 
     private static BackendKind ParseBackend(string value)
@@ -1954,13 +1992,13 @@ internal static partial class Program
         builder.AppendLine();
         builder.AppendLine("## Sessions");
         builder.AppendLine();
-        builder.AppendLine("| Session | Display | Backend | Model | Status | Messages | Observations | Verification | Handoff |");
-        builder.AppendLine("|---------|---------|---------|-------|--------|----------|--------------|--------------|---------|");
+        builder.AppendLine("| Session | Display | Backend | Model | Agent | Status | Messages | Observations | Verification | Handoff |");
+        builder.AppendLine("|---------|---------|---------|-------|-------|--------|----------|--------------|--------------|---------|");
         foreach (var session in bundle.Sessions)
         {
             var handoff = session.FinalHandoff?.Text is null ? "" : FirstLine(session.FinalHandoff.Text);
             builder.AppendLine(
-                $"| `{session.Id}` | {EscapePipe(session.DisplayName)} | {EscapePipe(session.Backend)} | {EscapePipe(session.Model)} | {EscapePipe(session.Status)} | {session.Messages.Count} | {session.StatusObservations.Count} | {session.Verification.Count} | {EscapePipe(handoff)} |");
+                $"| `{session.Id}` | {EscapePipe(session.DisplayName)} | {EscapePipe(session.Backend)} | {EscapePipe(session.Model)} | {EscapePipe(session.Agent)} | {EscapePipe(session.Status)} | {session.Messages.Count} | {session.StatusObservations.Count} | {session.Verification.Count} | {EscapePipe(handoff)} |");
         }
 
         builder.AppendLine();
@@ -1998,7 +2036,7 @@ internal static partial class Program
         {
             builder.AppendLine("<section class=\"card\">");
             builder.AppendLine($"<h3>{Html(session.DisplayName ?? session.Id)}</h3>");
-            builder.AppendLine($"<p class=\"meta\">{Html(session.Backend)} {Html(session.Provider)} {Html(session.Model)} · {Html(session.WorkstreamId)}</p>");
+            builder.AppendLine($"<p class=\"meta\">{Html(session.Backend)} {Html(session.Provider)} {Html(session.Model)} {Html(session.Agent)} · {Html(session.WorkstreamId)}</p>");
             builder.AppendLine($"<p class=\"status\">{Html(session.Status)}</p>");
             if (session.FinalHandoff is not null) builder.AppendLine($"<p>{Html(FirstLine(session.FinalHandoff.Text))}</p>");
             if (session.Blocker is not null) builder.AppendLine($"<p><strong>Blocker:</strong> {Html(session.Blocker.Summary)}</p>");
@@ -2192,6 +2230,56 @@ internal static partial class Program
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..maxLength] + "\n[truncated]";
 
+    private static string AppendNextCommandHints(string text, NextCommandHintContext context)
+    {
+        var hints = RenderNextCommandHints(context);
+        return text.EndsWith(Environment.NewLine, StringComparison.Ordinal)
+            ? text + hints
+            : text + Environment.NewLine + hints;
+    }
+
+    private static void WriteNextCommandHints(NextCommandHintContext context)
+    {
+        Console.Error.Write(RenderNextCommandHints(context));
+    }
+
+    private static string[] BuildSessionRunNextCommands(string missionId, WorkMapAgentSessionRecord session) =>
+    [
+        $"harness-cli work-map supervise --mission {missionId} --until-idle --max-runs 1",
+        $"harness-cli last-summary --backend {session.Backend} --session {session.Id} --plain"
+    ];
+
+    private static string RenderNextCommandHints(NextCommandHintContext context)
+    {
+        var mission = string.IsNullOrWhiteSpace(context.MissionId) ? "<mission>" : context.MissionId;
+        var stream = string.IsNullOrWhiteSpace(context.StreamId) ? "<stream>" : context.StreamId;
+        var directory = QuoteExampleValue(string.IsNullOrWhiteSpace(context.Directory) ? "<dir>" : context.Directory);
+        var role = QuoteExampleValue(string.IsNullOrWhiteSpace(context.Role) ? "<role>" : context.Role);
+
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.AppendLine("Next useful commands:");
+        builder.AppendLine();
+        builder.AppendLine("# Launch a linked worker using GitHub Copilot through the OpenCode provider");
+        builder.AppendLine($"harness-cli work-map session run --mission {mission} --stream {stream} --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900 --async");
+        builder.AppendLine();
+        builder.AppendLine("# Launch outside work-map only when linked visibility is not needed");
+        builder.AppendLine($"harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900");
+        builder.AppendLine();
+        builder.AppendLine("# Record/link an already-created session to this work-map stream");
+        builder.AppendLine($"harness-cli work-map session link --mission {mission} --stream {stream} --session <ses_...> --backend opencode --role {role}");
+        builder.AppendLine();
+        builder.AppendLine("# Inspect session handoff");
+        builder.AppendLine("harness-cli last-summary --session <ses_...> --plain");
+        builder.AppendLine();
+        builder.AppendLine("Use --backend copilot without a github-copilot provider model only for the standalone Copilot CLI backend.");
+        builder.AppendLine("Use --model github-copilot/gpt-5.5 with work-map session run or harness-cli ask for OpenCode sessions using the GitHub Copilot provider.");
+        return builder.ToString();
+    }
+
+    private static string QuoteExampleValue(string value) =>
+        "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+
     private static async Task<string> ReadTextOption(WorkMapArgs options, string required)
     {
         if (!string.IsNullOrWhiteSpace(options.Summary)) return options.Summary;
@@ -2283,6 +2371,19 @@ internal static partial class Program
         int Active,
         int Blocked,
         int Handoff);
+
+    private sealed record NextCommandHintContext(
+        string? MissionId,
+        string? StreamId,
+        string? Directory,
+        string? Role)
+    {
+        public static NextCommandHintContext ForMission(string missionId) =>
+            new(missionId, null, null, null);
+
+        public static NextCommandHintContext ForWorkstream(WorkMapWorkstreamRecord workstream) =>
+            new(workstream.MissionId, workstream.Id, workstream.ClonePath, workstream.Role);
+    }
 
     private sealed class WorkMapArgs
     {
@@ -2392,6 +2493,8 @@ internal static partial class Program
 
         public bool CopilotAllowAll { get; private set; }
 
+        public bool Help { get; private set; }
+
         public int TimeoutSeconds { get; private set; } = 300;
 
         public bool TimeoutWasProvided { get; private set; }
@@ -2475,6 +2578,8 @@ internal static partial class Program
                     case "--until-idle": parsed.UntilIdle = true; break;
                     case "--launch-missing": parsed.LaunchMissing = true; break;
                     case "--copilot-allow-all": parsed.CopilotAllowAll = true; break;
+                    case "--help": parsed.Help = true; break;
+                    case "-h": parsed.Help = true; break;
                     case "--interval-seconds":
                         parsed.IntervalSeconds = PositiveInt(Value(queue, arg), arg);
                         break;
