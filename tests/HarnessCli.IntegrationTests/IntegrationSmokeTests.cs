@@ -241,15 +241,22 @@ public class IntegrationSmokeTests
             var shown = await RunCli(workMapStore, "work-map", "show", "--mission", missionId);
             var bundle = JsonNode.Parse(shown.Stdout)!;
             Assert.Equal(missionId, bundle["mission"]!["id"]!.GetValue<string>());
-            AssertNextCommandHints(shown.Stderr, missionId, "<stream>");
+            AssertNextActionHint(shown, missionId);
 
             var markdown = await RunCli(workMapStore, "work-map", "show", "--mission", missionId, "--format", "md");
             Assert.Contains("# Hints", markdown.Stdout);
-            AssertNextCommandHints(markdown.Stdout, missionId, "<stream>");
+            AssertInlineNextCommandHints(markdown.Stdout, missionId, "<stream>");
+            AssertNextActionHint(markdown, missionId);
+
+            var markdownPath = Path.Combine(workMapStore, "show.md");
+            var markdownOutput = await RunCli(workMapStore, "work-map", "show", "--mission", missionId, "--format", "md", "--output", markdownPath);
+            Assert.Empty(markdownOutput.Stdout);
+            Assert.DoesNotContain("Next useful commands:", await File.ReadAllTextAsync(markdownPath));
+            AssertNextActionHint(markdownOutput, missionId);
 
             var html = await RunCli(workMapStore, "work-map", "show", "--mission", missionId, "--format", "html");
             Assert.Contains("<!doctype html>", html.Stdout);
-            AssertNextCommandHints(html.Stderr, missionId, "<stream>");
+            AssertNextActionHint(html, missionId);
         }
         finally
         {
@@ -285,9 +292,10 @@ public class IntegrationSmokeTests
             var stream = JsonNode.Parse(added.Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
-            AssertNextCommandHints(added.Stderr, missionId, streamId);
-            Assert.Contains("--directory \"" + workspace, added.Stderr);
-            Assert.Contains("--role \"builder\"", added.Stderr);
+            var addedHint = AssertNextActionHint(added, missionId, streamId);
+            var addedCommands = addedHint["nextCommands"]!.AsArray().Select(item => item!.GetValue<string>()).ToArray();
+            Assert.Contains(addedCommands, command => command.Contains("--directory \"" + workspace, StringComparison.Ordinal));
+            Assert.Contains(addedCommands, command => command.Contains("--role \"builder\"", StringComparison.Ordinal));
 
             var nonDefaultFormat = await RunCli(
                 workMapStore,
@@ -301,7 +309,7 @@ public class IntegrationSmokeTests
                 "--format",
                 "md");
             var formatTolerantStream = JsonNode.Parse(nonDefaultFormat.Stdout)!;
-            AssertNextCommandHints(nonDefaultFormat.Stderr, missionId, formatTolerantStream["id"]!.GetValue<string>());
+            AssertNextActionHint(nonDefaultFormat, missionId, formatTolerantStream["id"]!.GetValue<string>());
         }
         finally
         {
@@ -324,15 +332,85 @@ public class IntegrationSmokeTests
 
             var updated = await RunCli(workMapStore, "work-map", "mission", "update", "--mission", missionId, "--status", "in-progress");
             _ = JsonNode.Parse(updated.Stdout)!;
-            AssertNextCommandHints(updated.Stderr, missionId, "<stream>");
+            AssertNextActionHint(updated, missionId);
 
             var evidence = await RunCli(workMapStore, "work-map", "evidence", "add", "--mission", missionId, "--stream", streamId, "--summary", "Useful fact");
             _ = JsonNode.Parse(evidence.Stdout)!;
-            AssertNextCommandHints(evidence.Stderr, missionId, streamId);
+            AssertNextActionHint(evidence, missionId, streamId);
         }
         finally
         {
             if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+        }
+    }
+
+    [Fact]
+    public async Task WorkMapCommandsEmitStructuredNextActionForAgents()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var snapshot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            Directory.CreateDirectory(workspace);
+
+            var create = await RunCli(workMapStore, "work-map", "create", "--title", "Agent hints", "--intent", "Keep agents routed");
+            var mission = JsonNode.Parse(create.Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            AssertNextActionHint(create, missionId);
+
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "list"), missionId: null);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "list", "--format", "md"), missionId: null);
+
+            var streamAdd = await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Agent stream", "--role", "builder", "--clone", workspace);
+            var stream = JsonNode.Parse(streamAdd.Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+            AssertNextActionHint(streamAdd, missionId, streamId);
+
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "show", "--mission", missionId), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "brief", "--mission", missionId, "--stream", streamId), missionId, streamId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "stream", "update", "--mission", missionId, "--stream", streamId, "--status", "in-progress"), missionId, streamId);
+
+            const string sessionId = "external-agent-session";
+            var linkHint = AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "link", "--mission", missionId, "--stream", streamId, "--session", sessionId, "--backend", "external", "--role", "builder"), missionId, streamId, sessionId);
+            Assert.DoesNotContain("last-summary --backend external", linkHint.ToJsonString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("work-map session handoff", linkHint.ToJsonString(), StringComparison.OrdinalIgnoreCase);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "update", "--session", sessionId, "--status", "running"), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "handoff", "--session", sessionId, "--summary", "handoff ready"), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "blocker", "set", "--session", sessionId, "--summary", "blocked for test"), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "verify", "--session", sessionId, "--kind", "parent-review", "--result", "pass", "--summary", "looks good"), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "sync", "--session", sessionId), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "sync", "--mission", missionId, "--all"), missionId);
+
+            var evidenceAdd = await RunCli(workMapStore, "work-map", "evidence", "add", "--mission", missionId, "--stream", streamId, "--summary", "agent fact");
+            var evidenceId = JsonNode.Parse(evidenceAdd.Stdout)!["id"]!.GetValue<string>();
+            AssertNextActionHint(evidenceAdd, missionId, streamId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "evidence", "remove", "--mission", missionId, "--stream", streamId, "--evidence-id", evidenceId), missionId, streamId);
+
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "launch", "--mission", missionId, "--dry-run"), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "supervise", "--mission", missionId, "--max-runs", "1"), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "store", "info"), missionId: null);
+
+            var export = await RunCli(workMapStore, "work-map", "store", "export", "--output", snapshot);
+            Assert.Empty(export.Stdout);
+            AssertNextActionHint(export, missionId: null);
+            _ = JsonNode.Parse(await File.ReadAllTextAsync(snapshot))!;
+            var importConflict = await RunCliAllowFailure(workMapStore, "work-map", "store", "import", "--file", snapshot, "--dry-run");
+            Assert.Equal(1, importConflict.ExitCode);
+            AssertNextActionHint(importConflict, missionId: null);
+
+            AssertNextActionHint(await RunCli(workMapStore, "help", "work-map"), missionId: null);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "--help"), missionId: null);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "archive", "--session", sessionId), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "stream", "delete", "--mission", missionId, "--stream", streamId, "--force"), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "work-map", "mission", "update", "--mission", missionId, "--status", "done"), missionId);
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+            if (File.Exists(snapshot)) File.Delete(snapshot);
         }
     }
 
@@ -415,6 +493,7 @@ public class IntegrationSmokeTests
             Assert.Equal(workspace, output["directory"]!.GetValue<string>());
             Assert.Contains("work-map supervise", output["nextCommands"]![0]!.GetValue<string>());
             Assert.Contains("last-summary --backend codex", output["nextCommands"]![1]!.GetValue<string>());
+            AssertNextActionHint(new CliResult(process.ExitCode, stdout, stderr), missionId, streamId, output["sessionID"]!.GetValue<string>());
 
             var finalSession = await ReadWorkMapSession(workMapStore, earlySession["id"]!.GetValue<string>());
             Assert.Equal("handoff", finalSession["status"]!.GetValue<string>());
@@ -483,6 +562,7 @@ public class IntegrationSmokeTests
             Assert.Equal(workspace, output["directory"]!.GetValue<string>());
             Assert.Contains("work-map supervise", output["nextCommands"]![0]!.GetValue<string>());
             Assert.Contains("last-summary --backend opencode", output["nextCommands"]![1]!.GetValue<string>());
+            AssertNextActionHint(result, missionId, streamId, output["sessionID"]!.GetValue<string>());
 
             var sessions = JsonNode.Parse((await RunCli(workMapStore, "work-map", "show", "--mission", missionId)).Stdout)!["sessions"]!.AsArray();
             var session = Assert.Single(sessions);
@@ -689,6 +769,8 @@ public class IntegrationSmokeTests
             Assert.Contains("--directory PATH", sessionRunHelp.Stdout);
             Assert.Contains("--summary-marker TEXT", sessionRunHelp.Stdout);
             Assert.Contains("same execution controls as ask", sessionRunHelp.Stdout);
+            AssertNextActionHint(help, missionId: null);
+            AssertNextActionHint(sessionRunHelp, missionId: null);
         }
         finally
         {
@@ -702,7 +784,39 @@ public class IntegrationSmokeTests
     private static Task<CliResult> RunCliAllowFailure(string workMapStore, params string[] args) =>
         RunCli(workMapStore, null, assertSuccess: false, args);
 
-    private static void AssertNextCommandHints(string text, string missionId, string streamId)
+    private static JsonNode AssertNextActionHint(CliResult result, string? missionId = null, string? streamId = null, string? sessionId = null)
+    {
+        var hint = ReadNextActionHint(result.Stderr);
+        Assert.Equal("work-map-next-action", hint["kind"]!.GetValue<string>());
+        Assert.False(string.IsNullOrWhiteSpace(hint["suggestedNextAction"]!.GetValue<string>()));
+        if (missionId is not null) Assert.Equal(missionId, hint["missionID"]!.GetValue<string>());
+        if (streamId is not null) Assert.Equal(streamId, hint["streamID"]!.GetValue<string>());
+        if (sessionId is not null) Assert.Equal(sessionId, hint["sessionID"]!.GetValue<string>());
+        Assert.NotEmpty(hint["nextCommands"]!.AsArray());
+        var serialized = hint.ToJsonString();
+        Assert.Contains("harness-cli work-map", serialized);
+        Assert.Contains("github-copilot/gpt-5.5", serialized);
+        Assert.Contains("standalone Copilot CLI backend", serialized);
+        Assert.DoesNotContain("opencode run", serialized, StringComparison.OrdinalIgnoreCase);
+        return hint;
+    }
+
+    private static JsonNode ReadNextActionHint(string stderr)
+    {
+        foreach (var line in stderr.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Reverse())
+        {
+            if (!line.StartsWith('{')) continue;
+            var parsed = JsonNode.Parse(line);
+            if (parsed?["kind"]?.GetValue<string>() == "work-map-next-action")
+            {
+                return parsed;
+            }
+        }
+
+        throw new InvalidOperationException("No work-map-next-action payload was written to stderr.");
+    }
+
+    private static void AssertInlineNextCommandHints(string text, string missionId, string streamId)
     {
         Assert.Contains("Next useful commands:", text);
         Assert.Contains("harness-cli work-map session run", text);
@@ -710,8 +824,6 @@ public class IntegrationSmokeTests
         Assert.Contains("--model github-copilot/gpt-5.5 --variant high --agent build", text);
         Assert.Contains("harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build", text);
         Assert.Contains("--prompt-file \"<brief.md>\" --timeout 900", text);
-        Assert.Contains($"harness-cli work-map session link --mission {missionId} --stream {streamId}", text);
-        Assert.Contains("harness-cli last-summary --session <ses_...> --plain", text);
         Assert.Contains("Use --backend copilot without a github-copilot provider model only for the standalone Copilot CLI backend.", text);
         Assert.Contains("Use --model github-copilot/gpt-5.5 with work-map session run or harness-cli ask for OpenCode sessions using the GitHub Copilot provider.", text);
         Assert.DoesNotContain("opencode run", text, StringComparison.OrdinalIgnoreCase);

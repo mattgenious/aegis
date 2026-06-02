@@ -16,6 +16,7 @@ internal static partial class Program
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         {
             PrintWorkMapHelp();
+            WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a mission, then launch linked worker sessions from the map."));
             return 0;
         }
 
@@ -23,10 +24,18 @@ internal static partial class Program
         if (options.Help)
         {
             PrintWorkMapHelp();
+            WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a mission, then launch linked worker sessions from the map."));
             return 0;
         }
 
         var store = new FileWorkMapStore();
+        if (options.Positionals is ["serve", ..])
+        {
+            var host = string.IsNullOrWhiteSpace(options.Host) ? WorkMapDefaultHost : options.Host;
+            var port = options.Port ?? WorkMapDefaultPort;
+            WriteWorkMapNextAction(NextCommandHintContext.General($"Open http://{host}:{port}/ or keep the observer running while agents update the map."));
+            return await WorkMapServe(store, options);
+        }
 
         return options.Positionals switch
         {
@@ -84,7 +93,9 @@ internal static partial class Program
         };
 
         await store.SaveMissionAsync(mission);
-        WriteJson(JsonSerializer.SerializeToNode(mission, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(mission, JsonOptions),
+            NextCommandHintContext.ForMission(mission.Id, "Add workstreams, then launch linked worker sessions from this mission."));
         return 0;
     }
 
@@ -102,11 +113,14 @@ internal static partial class Program
                 builder.AppendLine($"- `{mission.Id}` - {mission.Title} ({mission.Status})");
             }
 
-            await WriteWorkMapOutput(builder.ToString(), options);
+            await WriteWorkMapOutput(WithInlineHints(builder.ToString(), NextCommandHintContext.General("Pick a mission to inspect or create a new one."), options), options);
+            WriteWorkMapNextAction(NextCommandHintContext.General("Pick a mission to inspect or create a new one."));
             return 0;
         }
 
-        WriteJson(JsonSerializer.SerializeToNode(ordered, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(ordered, JsonOptions),
+            NextCommandHintContext.General("Pick a mission to inspect or create a new one."));
         return 0;
     }
 
@@ -135,8 +149,9 @@ internal static partial class Program
             };
         });
 
-        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
-        WriteNextCommandHints(NextCommandHintContext.ForMission(updated.Id));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updated, JsonOptions),
+            NextCommandHintContext.ForMission(updated.Id, "Inspect the mission and launch or supervise the next linked worker."));
         return 0;
     }
 
@@ -202,8 +217,9 @@ internal static partial class Program
             };
         });
 
-        WriteJson(JsonSerializer.SerializeToNode(workstream, JsonOptions));
-        WriteNextCommandHints(NextCommandHintContext.ForWorkstream(workstream));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(workstream, JsonOptions),
+            NextCommandHintContext.ForWorkstream(workstream, "Launch a linked worker for the new stream."));
         return 0;
     }
 
@@ -247,7 +263,9 @@ internal static partial class Program
             };
         });
 
-        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updated, JsonOptions),
+            NextCommandHintContext.ForWorkstream(updated, "Launch, sync, or supervise the worker attached to this stream."));
         return 0;
     }
 
@@ -290,12 +308,12 @@ internal static partial class Program
             };
         });
 
-        WriteJson(new JsonObject
+        WriteWorkMapJson(new JsonObject
         {
             ["missionID"] = updatedMission.Id,
             ["streamID"] = stream.Id,
             ["deleted"] = true
-        });
+        }, NextCommandHintContext.ForMission(updatedMission.Id, "Inspect the mission and decide which remaining stream needs ownership."));
         return 0;
     }
 
@@ -340,7 +358,9 @@ internal static partial class Program
         };
 
         await SaveSessionAttachment(store, mission, workstream, session, now, "Session linked.");
-        WriteJson(JsonSerializer.SerializeToNode(session, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(session, JsonOptions),
+            NextCommandHintContext.ForSession(session, "Sync or supervise the linked session so the map reflects current worker state."));
         return 0;
     }
 
@@ -371,7 +391,7 @@ internal static partial class Program
                 : $"{outcome.Blocker.Summary}: {outcome.Blocker.Evidence}");
         }
 
-        WriteJson(new JsonObject
+        WriteWorkMapJson(new JsonObject
         {
             ["missionID"] = mission.Id,
             ["workstreamID"] = workstream.Id,
@@ -389,7 +409,7 @@ internal static partial class Program
             ["status"] = outcome.Session.Status,
             ["summary"] = outcome.Session.FinalHandoff?.Text,
             ["nextCommands"] = JsonSerializer.SerializeToNode(BuildSessionRunNextCommands(mission.Id, outcome.Session), JsonOptions)
-        });
+        }, NextCommandHintContext.ForSession(outcome.Session, "Supervise the mission or inspect the worker handoff."));
         return 0;
     }
 
@@ -630,12 +650,16 @@ internal static partial class Program
                 }
             }
 
-            WriteJson(results);
+            WriteWorkMapJson(
+                results,
+                NextCommandHintContext.ForMission(mission.Id, "Review sync results, then supervise again or inspect blocked sessions."));
             return 0;
         }
 
         var updated = await SyncWorkMapSession(store, await RequireAgentSession(store, options.SessionId), options);
-        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updated, JsonOptions),
+            NextCommandHintContext.ForSession(updated, "Inspect the latest handoff, blocker, or mission state."));
         return 0;
     }
 
@@ -738,7 +762,9 @@ internal static partial class Program
             };
         });
 
-        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updated, JsonOptions),
+            NextCommandHintContext.ForSession(updated, "Sync or supervise the updated session."));
         return 0;
     }
 
@@ -768,7 +794,9 @@ internal static partial class Program
         });
 
         await UpdateSessionParents(store, updated, now, "sessionArchived", summary);
-        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updated, JsonOptions),
+            NextCommandHintContext.ForSession(updated, "Inspect the mission and relaunch only if this archived session still has unfinished work."));
         return 0;
     }
 
@@ -801,7 +829,9 @@ internal static partial class Program
         });
 
         await UpdateSessionParents(store, updated, now, "sessionHandoffRecorded", "Session handoff recorded.");
-        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updated, JsonOptions),
+            NextCommandHintContext.ForSession(updated, "Integrate the handoff, then record evidence or verification on the map."));
         return 0;
     }
 
@@ -835,7 +865,9 @@ internal static partial class Program
         });
 
         await UpdateSessionParents(store, updated, now, "sessionBlockerRecorded", summary);
-        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updated, JsonOptions),
+            NextCommandHintContext.ForSession(updated, "Resolve the blocker or launch a replacement worker from the same stream."));
         return 0;
     }
 
@@ -874,7 +906,9 @@ internal static partial class Program
         });
 
         await UpdateSessionParents(store, updated, now, "sessionVerificationRecorded", $"{verification.Kind}: {verification.Result}");
-        WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updated, JsonOptions),
+            NextCommandHintContext.ForSession(updated, "Use the verification result to integrate, relaunch, or close the stream."));
         return 0;
     }
 
@@ -937,12 +971,16 @@ internal static partial class Program
             });
         }
 
-        WriteJson(JsonSerializer.SerializeToNode(evidence, JsonOptions));
-        WriteNextCommandHints(new NextCommandHintContext(
-            MissionId: mission.Id,
-            StreamId: options.StreamId,
-            Directory: null,
-            Role: null));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(evidence, JsonOptions),
+            new NextCommandHintContext(
+                MissionId: mission.Id,
+                StreamId: options.StreamId,
+                SessionId: options.SessionId,
+                Backend: null,
+                Directory: null,
+                Role: null,
+                SuggestedNextAction: "Inspect the mission and decide whether to supervise, verify, or launch the next worker."));
         return 0;
     }
 
@@ -963,7 +1001,9 @@ internal static partial class Program
                     .ToList(),
                 UpdatedAtUtc = now
             });
-            WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+            WriteWorkMapJson(
+                JsonSerializer.SerializeToNode(updated, JsonOptions),
+                NextCommandHintContext.ForWorkstream(updated, "Inspect the stream and replace or refresh evidence if needed."));
             return 0;
         }
 
@@ -978,7 +1018,9 @@ internal static partial class Program
                     .ToList(),
                 UpdatedAtUtc = now
             });
-            WriteJson(JsonSerializer.SerializeToNode(updated, JsonOptions));
+            WriteWorkMapJson(
+                JsonSerializer.SerializeToNode(updated, JsonOptions),
+                NextCommandHintContext.ForSession(updated, "Inspect the session and replace or refresh evidence if needed."));
             return 0;
         }
 
@@ -989,7 +1031,9 @@ internal static partial class Program
                 .ToList(),
             UpdatedAtUtc = now
         });
-        WriteJson(JsonSerializer.SerializeToNode(updatedMission, JsonOptions));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(updatedMission, JsonOptions),
+            NextCommandHintContext.ForMission(updatedMission.Id, "Inspect the mission and replace or refresh evidence if needed."));
         return 0;
     }
 
@@ -1002,19 +1046,23 @@ internal static partial class Program
 
         if (IsMarkdown(options.Format))
         {
-            await WriteWorkMapOutput(AppendNextCommandHints(BuildWorkMapMarkdown(bundle), NextCommandHintContext.ForMission(mission.Id)), options);
+            var context = NextCommandHintContext.ForMission(mission.Id, "Pick the next stream to launch, supervise, verify, or close.");
+            await WriteWorkMapOutput(WithInlineHints(BuildWorkMapMarkdown(bundle), context, options), options);
+            WriteWorkMapNextAction(context);
             return 0;
         }
 
         if (options.Format.Equals("html", StringComparison.OrdinalIgnoreCase))
         {
+            var context = NextCommandHintContext.ForMission(mission.Id, "Pick the next stream to launch, supervise, verify, or close.");
             await WriteWorkMapOutput(BuildWorkMapHtml(bundle), options);
-            WriteNextCommandHints(NextCommandHintContext.ForMission(mission.Id));
+            WriteWorkMapNextAction(context);
             return 0;
         }
 
-        WriteJson(JsonSerializer.SerializeToNode(bundle, JsonOptions));
-        WriteNextCommandHints(NextCommandHintContext.ForMission(mission.Id));
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(bundle, JsonOptions),
+            NextCommandHintContext.ForMission(mission.Id, "Pick the next stream to launch, supervise, verify, or close."));
         return 0;
     }
 
@@ -1027,6 +1075,7 @@ internal static partial class Program
         var relevantSessions = sessions.Where(item => item.WorkstreamId == workstream.Id).ToArray();
         var brief = BuildDelegationBrief(mission, workstream, relevantSessions);
         await WriteWorkMapOutput(brief, options);
+        WriteWorkMapNextAction(NextCommandHintContext.ForWorkstream(workstream, "Launch a linked worker with this brief, or supervise the stream if it is already running."));
         return 0;
     }
 
@@ -1034,7 +1083,11 @@ internal static partial class Program
     {
         var mission = await RequireMission(store, options.MissionId);
         var result = await LaunchWorkMapMission(store, mission, options);
-        WriteJson(ToLaunchJson(result));
+        WriteWorkMapJson(
+            ToLaunchJson(result),
+            NextCommandHintContext.ForMission(mission.Id, result.FailureCount == 0
+                ? "Supervise launched workers until idle, then inspect handoffs."
+                : "Inspect launch failures and retry or update blocked streams."));
         return result.FailureCount == 0 ? 0 : 1;
     }
 
@@ -1233,7 +1286,7 @@ internal static partial class Program
             await Task.Delay(delay);
         }
 
-        WriteJson(new JsonObject
+        WriteWorkMapJson(new JsonObject
         {
             ["missionID"] = mission.Id,
             ["quiet"] = finalCounts.Quiet,
@@ -1241,7 +1294,9 @@ internal static partial class Program
             ["blocked"] = finalCounts.Blocked,
             ["handoff"] = finalCounts.Handoff,
             ["runs"] = runs
-        });
+        }, NextCommandHintContext.ForMission(mission.Id, finalCounts.Active > 0
+            ? "Continue supervision until active workers are idle."
+            : "Inspect handoffs, blockers, and evidence before closing or launching more work."));
         return 0;
     }
 
@@ -1253,7 +1308,7 @@ internal static partial class Program
         var directory = (store as FileWorkMapStore)?.DirectoryPath;
         var exists = directory is not null && Directory.Exists(directory);
 
-        WriteJson(new JsonObject
+        WriteWorkMapJson(new JsonObject
         {
             ["provider"] = "json-directory",
             ["directory"] = directory,
@@ -1263,7 +1318,7 @@ internal static partial class Program
             ["sessions"] = sessions.Count,
             ["jsonFiles"] = exists ? CountJsonFiles(directory!) : 0,
             ["bytes"] = exists ? SumFileBytes(directory!) : 0
-        });
+        }, NextCommandHintContext.General("List or show a mission from this store."));
         return 0;
     }
 
@@ -1278,6 +1333,7 @@ internal static partial class Program
         };
         var json = JsonSerializer.Serialize(snapshot, JsonOptions);
         await WriteWorkMapOutput(json + Environment.NewLine, options);
+        WriteWorkMapNextAction(NextCommandHintContext.General("Import this snapshot into another store, or inspect a mission from the exported records."));
         return 0;
     }
 
@@ -1287,18 +1343,18 @@ internal static partial class Program
         var conflicts = await FindSnapshotConflicts(store, snapshot);
         if (conflicts.Count > 0 && !options.Force)
         {
-            WriteJson(new JsonObject
+            WriteWorkMapJson(new JsonObject
             {
                 ["imported"] = false,
                 ["conflicts"] = conflicts,
                 ["message"] = "Snapshot contains records that already exist. Pass --force to overwrite them."
-            });
+            }, NextCommandHintContext.General("Review import conflicts; rerun with --force only when overwriting is intended."));
             return 1;
         }
 
         if (options.DryRun)
         {
-            WriteJson(new JsonObject
+            WriteWorkMapJson(new JsonObject
             {
                 ["imported"] = false,
                 ["dryRun"] = true,
@@ -1306,7 +1362,7 @@ internal static partial class Program
                 ["workstreams"] = snapshot.Workstreams.Count,
                 ["sessions"] = snapshot.Sessions.Count,
                 ["conflicts"] = conflicts
-            });
+            }, NextCommandHintContext.General("If the dry-run looks correct, rerun store import without --dry-run."));
             return 0;
         }
 
@@ -1328,14 +1384,14 @@ internal static partial class Program
             await store.SaveAgentSessionAsync(session);
         }
 
-        WriteJson(new JsonObject
+        WriteWorkMapJson(new JsonObject
         {
             ["imported"] = true,
             ["missions"] = snapshot.Missions.Count,
             ["workstreams"] = snapshot.Workstreams.Count,
             ["sessions"] = snapshot.Sessions.Count,
             ["overwroteExisting"] = conflicts.Count
-        });
+        }, NextCommandHintContext.General("List imported missions, then show the mission you want to continue."));
         return 0;
     }
 
@@ -2230,6 +2286,13 @@ internal static partial class Program
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..maxLength] + "\n[truncated]";
 
+    private static string WithInlineHints(string text, NextCommandHintContext context, WorkMapArgs options)
+    {
+        return string.IsNullOrWhiteSpace(options.Output)
+            ? AppendNextCommandHints(text, context)
+            : text;
+    }
+
     private static string AppendNextCommandHints(string text, NextCommandHintContext context)
     {
         var hints = RenderNextCommandHints(context);
@@ -2238,9 +2301,16 @@ internal static partial class Program
             : text + Environment.NewLine + hints;
     }
 
-    private static void WriteNextCommandHints(NextCommandHintContext context)
+    private static void WriteWorkMapJson(JsonNode? node, NextCommandHintContext context)
     {
-        Console.Error.Write(RenderNextCommandHints(context));
+        WriteJson(node);
+        WriteWorkMapNextAction(context);
+    }
+
+    private static void WriteWorkMapNextAction(NextCommandHintContext context)
+    {
+        Console.Error.WriteLine(BuildWorkMapNextActionJson(context).ToJsonString(WorkMapNextActionJsonOptions));
+        Console.Error.Flush();
     }
 
     private static string[] BuildSessionRunNextCommands(string missionId, WorkMapAgentSessionRecord session) =>
@@ -2249,31 +2319,122 @@ internal static partial class Program
         $"harness-cli last-summary --backend {session.Backend} --session {session.Id} --plain"
     ];
 
-    private static string RenderNextCommandHints(NextCommandHintContext context)
+    private static JsonObject BuildWorkMapNextActionJson(NextCommandHintContext context) =>
+        new()
+        {
+            ["kind"] = "work-map-next-action",
+            ["suggestedNextAction"] = SuggestedNextAction(context),
+            ["missionID"] = string.IsNullOrWhiteSpace(context.MissionId) ? null : context.MissionId,
+            ["streamID"] = string.IsNullOrWhiteSpace(context.StreamId) ? null : context.StreamId,
+            ["sessionID"] = string.IsNullOrWhiteSpace(context.SessionId) ? null : context.SessionId,
+            ["backend"] = string.IsNullOrWhiteSpace(context.Backend) ? null : context.Backend,
+            ["nextCommands"] = JsonSerializer.SerializeToNode(BuildNextCommands(context), JsonOptions),
+            ["notes"] = JsonSerializer.SerializeToNode(WorkMapNextActionNotes, JsonOptions)
+        };
+
+    private static readonly string[] WorkMapNextActionNotes =
+    [
+        "Use --backend copilot without a github-copilot provider model only for the standalone Copilot CLI backend.",
+        "Use --model github-copilot/gpt-5.5 with work-map session run or harness-cli ask for OpenCode sessions using the GitHub Copilot provider."
+    ];
+
+    private static readonly JsonSerializerOptions WorkMapNextActionJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false
+    };
+
+    private static string SuggestedNextAction(NextCommandHintContext context)
+    {
+        if (!string.IsNullOrWhiteSpace(context.SuggestedNextAction))
+        {
+            return context.SuggestedNextAction;
+        }
+
+        if (!string.IsNullOrWhiteSpace(context.SessionId))
+        {
+            return "Sync or inspect the linked session, then update the stream status.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(context.StreamId))
+        {
+            return "Launch a linked worker for this stream, or supervise the mission if a worker is already attached.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(context.MissionId))
+        {
+            return "Inspect the mission, add a stream if needed, then launch linked workers.";
+        }
+
+        return "List existing missions or create a mission before launching linked workers.";
+    }
+
+    private static string[] BuildNextCommands(NextCommandHintContext context)
     {
         var mission = string.IsNullOrWhiteSpace(context.MissionId) ? "<mission>" : context.MissionId;
         var stream = string.IsNullOrWhiteSpace(context.StreamId) ? "<stream>" : context.StreamId;
         var directory = QuoteExampleValue(string.IsNullOrWhiteSpace(context.Directory) ? "<dir>" : context.Directory);
         var role = QuoteExampleValue(string.IsNullOrWhiteSpace(context.Role) ? "<role>" : context.Role);
+        var commands = new List<string>();
 
+        if (!string.IsNullOrWhiteSpace(context.SessionId))
+        {
+            commands.Add($"harness-cli work-map session sync --session {context.SessionId}");
+            commands.Add($"harness-cli work-map show --mission {mission} --format md");
+            if (!string.IsNullOrWhiteSpace(context.Backend) && BackendKindExtensions.TryParse(context.Backend, out _))
+            {
+                commands.Add($"harness-cli last-summary --backend {context.Backend} --session {context.SessionId} --plain");
+            }
+            else
+            {
+                commands.Add($"harness-cli work-map session handoff --session {context.SessionId} --summary \"<handoff>\"");
+                commands.Add($"harness-cli work-map session blocker set --session {context.SessionId} --summary \"<blocker>\"");
+            }
+
+            return commands.ToArray();
+        }
+
+        if (!string.IsNullOrWhiteSpace(context.StreamId))
+        {
+            commands.Add($"harness-cli work-map session run --mission {mission} --stream {stream} --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900 --async");
+            commands.Add($"harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900");
+            commands.Add($"harness-cli work-map session link --mission {mission} --stream {stream} --session <ses_...> --backend opencode --role {role}");
+            commands.Add($"harness-cli work-map supervise --mission {mission} --until-idle --max-runs 1");
+            return commands.ToArray();
+        }
+
+        if (!string.IsNullOrWhiteSpace(context.MissionId))
+        {
+            commands.Add($"harness-cli work-map show --mission {mission} --format md");
+            commands.Add($"harness-cli work-map stream add --mission {mission} --name \"<stream>\" --role \"<role>\" --clone \"<dir>\"");
+            commands.Add($"harness-cli work-map session run --mission {mission} --stream <stream> --model github-copilot/gpt-5.5 --variant high --agent build --directory \"<dir>\" --prompt-file \"<brief.md>\" --timeout 900 --async");
+            commands.Add("harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build --directory \"<dir>\" --prompt-file \"<brief.md>\" --timeout 900");
+            return commands.ToArray();
+        }
+
+        commands.Add("harness-cli work-map list --format md");
+        commands.Add("harness-cli work-map create --title \"<mission>\" --intent \"<goal>\"");
+        commands.Add("harness-cli work-map store info");
+        return commands.ToArray();
+    }
+
+    private static string RenderNextCommandHints(NextCommandHintContext context)
+    {
         var builder = new StringBuilder();
         builder.AppendLine();
         builder.AppendLine("Next useful commands:");
         builder.AppendLine();
-        builder.AppendLine("# Launch a linked worker using GitHub Copilot through the OpenCode provider");
-        builder.AppendLine($"harness-cli work-map session run --mission {mission} --stream {stream} --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900 --async");
+        builder.AppendLine(SuggestedNextAction(context));
+        foreach (var command in BuildNextCommands(context))
+        {
+            builder.AppendLine(command);
+        }
+
         builder.AppendLine();
-        builder.AppendLine("# Launch outside work-map only when linked visibility is not needed");
-        builder.AppendLine($"harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900");
-        builder.AppendLine();
-        builder.AppendLine("# Record/link an already-created session to this work-map stream");
-        builder.AppendLine($"harness-cli work-map session link --mission {mission} --stream {stream} --session <ses_...> --backend opencode --role {role}");
-        builder.AppendLine();
-        builder.AppendLine("# Inspect session handoff");
-        builder.AppendLine("harness-cli last-summary --session <ses_...> --plain");
-        builder.AppendLine();
-        builder.AppendLine("Use --backend copilot without a github-copilot provider model only for the standalone Copilot CLI backend.");
-        builder.AppendLine("Use --model github-copilot/gpt-5.5 with work-map session run or harness-cli ask for OpenCode sessions using the GitHub Copilot provider.");
+        foreach (var note in WorkMapNextActionNotes)
+        {
+            builder.AppendLine(note);
+        }
+
         return builder.ToString();
     }
 
@@ -2375,14 +2536,23 @@ internal static partial class Program
     private sealed record NextCommandHintContext(
         string? MissionId,
         string? StreamId,
+        string? SessionId,
+        string? Backend,
         string? Directory,
-        string? Role)
+        string? Role,
+        string? SuggestedNextAction)
     {
-        public static NextCommandHintContext ForMission(string missionId) =>
-            new(missionId, null, null, null);
+        public static NextCommandHintContext General(string suggestedNextAction) =>
+            new(null, null, null, null, null, null, suggestedNextAction);
 
-        public static NextCommandHintContext ForWorkstream(WorkMapWorkstreamRecord workstream) =>
-            new(workstream.MissionId, workstream.Id, workstream.ClonePath, workstream.Role);
+        public static NextCommandHintContext ForMission(string missionId, string? suggestedNextAction = null) =>
+            new(missionId, null, null, null, null, null, suggestedNextAction);
+
+        public static NextCommandHintContext ForWorkstream(WorkMapWorkstreamRecord workstream, string? suggestedNextAction = null) =>
+            new(workstream.MissionId, workstream.Id, null, null, workstream.ClonePath, workstream.Role, suggestedNextAction);
+
+        public static NextCommandHintContext ForSession(WorkMapAgentSessionRecord session, string? suggestedNextAction = null) =>
+            new(session.MissionId, session.WorkstreamId, session.Id, session.Backend, session.Directory, session.Role, suggestedNextAction);
     }
 
     private sealed class WorkMapArgs
