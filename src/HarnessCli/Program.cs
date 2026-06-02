@@ -1841,7 +1841,7 @@ Usage:
   harness-cli work-map stream add --mission ID --name NAME [--clone PATH]
   harness-cli work-map launch --mission ID [--dry-run]
   harness-cli work-map supervise --mission ID [--launch-missing] [--until-idle]
-  harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md [--async] [--wait]
+  harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md [--model MODEL] [--variant NAME] [--agent NAME] [--directory PATH] [--async] [--wait]
   harness-cli work-map session sync --mission ID --all
   harness-cli work-map session handoff --session ID --summary TEXT
   harness-cli work-map show --mission ID --format json|md|html
@@ -1981,7 +1981,7 @@ Usage:
   harness-cli work-map stream update --mission ID --stream ID [--status STATUS] [--integration-action TEXT]
   harness-cli work-map stream delete --mission ID --stream ID [--force]
   harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex|copilot|manual|external] [--role TEXT]
-  harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend codex|copilot] [--async] [--wait]
+  harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend opencode|codex|pi|copilot] [--model MODEL] [--variant NAME] [--agent NAME] [--directory PATH] [--title TITLE] [--summary-marker TEXT] [--async] [--wait]
   harness-cli work-map session sync --session ID [--message-limit N]
   harness-cli work-map session sync --mission ID --all [--message-limit N]
   harness-cli work-map session update --session ID [--status STATUS] [--display-name NAME]
@@ -2000,6 +2000,16 @@ Notes:
   store export/import writes portable JSON snapshots; the runtime store remains a JSON directory.
   session run links the work-map session before posting the backend prompt, so long-running
   workers are visible to show, supervise, and the observer UI while they are still active.
+  session run accepts the same execution controls as ask where the selected backend supports
+  them: --model, --variant/--reasoning, --agent, --directory, --title, --summary-marker,
+  --timeout, --raw, --no-reply, and Copilot permission flags. These controls are stored on
+  the work-map session record so the observer API/UI can show what was launched.
+  If --model is omitted, the selected backend uses its own configured/default model. The JSON
+  output includes the resolved provider/model/variant/agent/directory metadata when known.
+  For compatibility, --backend copilot with --model github-copilot/<model> is routed through
+  the OpenCode GitHub Copilot provider, matching `harness-cli ask --model github-copilot/<model>`.
+  Use --backend copilot without a github-copilot provider model for the standalone Copilot CLI
+  backend.
   session link/update accept manual external backend labels for non-harness workers such as
   shipper, background, human, or external coordinator sessions; sync skips those records.
   serve starts an optional read-only React observer UI over the same records and logs each
