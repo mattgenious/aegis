@@ -1955,7 +1955,10 @@ Run note:
             case "watch-many": PrintWatchManyHelp(); return 0;
             case "tail": PrintTailHelp(); return 0;
             case "export": PrintExportHelp(); return 0;
-            case "work-map": PrintWorkMapHelp(); return 0;
+            case "work-map":
+                PrintWorkMapHelp();
+                WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a mission, then launch linked worker sessions from the map."));
+                return 0;
             default:
                 Console.Error.WriteLine($"Unknown command '{command}'. Run `harness-cli --help` for the command list.");
                 return 1;
