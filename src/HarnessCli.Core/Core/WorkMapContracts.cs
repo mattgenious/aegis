@@ -96,6 +96,8 @@ public sealed record WorkMapAgentSessionRecord
 
     public string? Variant { get; init; }
 
+    public string? Agent { get; init; }
+
     public string? Directory { get; init; }
 
     public string Status { get; init; } = "planned";

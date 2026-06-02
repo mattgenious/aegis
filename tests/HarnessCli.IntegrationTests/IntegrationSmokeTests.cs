@@ -228,6 +228,115 @@ public class IntegrationSmokeTests
     }
 
     [Fact]
+    public async Task WorkMapShowEmitsNextCommandHintsWithoutPollutingJson()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Hints")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Hinted stream");
+
+            var shown = await RunCli(workMapStore, "work-map", "show", "--mission", missionId);
+            var bundle = JsonNode.Parse(shown.Stdout)!;
+            Assert.Equal(missionId, bundle["mission"]!["id"]!.GetValue<string>());
+            AssertNextCommandHints(shown.Stderr, missionId, "<stream>");
+
+            var markdown = await RunCli(workMapStore, "work-map", "show", "--mission", missionId, "--format", "md");
+            Assert.Contains("# Hints", markdown.Stdout);
+            AssertNextCommandHints(markdown.Stdout, missionId, "<stream>");
+
+            var html = await RunCli(workMapStore, "work-map", "show", "--mission", missionId, "--format", "html");
+            Assert.Contains("<!doctype html>", html.Stdout);
+            AssertNextCommandHints(html.Stderr, missionId, "<stream>");
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+        }
+    }
+
+    [Fact]
+    public async Task WorkMapStreamAddEmitsNextCommandHintsWithNewStreamContext()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            Directory.CreateDirectory(workspace);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Stream hints")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+
+            var added = await RunCli(
+                workMapStore,
+                "work-map",
+                "stream",
+                "add",
+                "--mission",
+                missionId,
+                "--name",
+                "Worker slice",
+                "--role",
+                "builder",
+                "--clone",
+                workspace);
+            var stream = JsonNode.Parse(added.Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            AssertNextCommandHints(added.Stderr, missionId, streamId);
+            Assert.Contains("--directory \"" + workspace, added.Stderr);
+            Assert.Contains("--role \"builder\"", added.Stderr);
+
+            var nonDefaultFormat = await RunCli(
+                workMapStore,
+                "work-map",
+                "stream",
+                "add",
+                "--mission",
+                missionId,
+                "--name",
+                "Format tolerant",
+                "--format",
+                "md");
+            var formatTolerantStream = JsonNode.Parse(nonDefaultFormat.Stdout)!;
+            AssertNextCommandHints(nonDefaultFormat.Stderr, missionId, formatTolerantStream["id"]!.GetValue<string>());
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+        }
+    }
+
+    [Fact]
+    public async Task WorkMapMissionUpdateAndEvidenceAddEmitNextCommandHints()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Mutation hints")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Evidence stream")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            var updated = await RunCli(workMapStore, "work-map", "mission", "update", "--mission", missionId, "--status", "in-progress");
+            _ = JsonNode.Parse(updated.Stdout)!;
+            AssertNextCommandHints(updated.Stderr, missionId, "<stream>");
+
+            var evidence = await RunCli(workMapStore, "work-map", "evidence", "add", "--mission", missionId, "--stream", streamId, "--summary", "Useful fact");
+            _ = JsonNode.Parse(evidence.Stdout)!;
+            AssertNextCommandHints(evidence.Stderr, missionId, streamId);
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+        }
+    }
+
+    [Fact]
     public async Task WorkMapSessionRunAttachesSessionBeforeBlockingCodexCompletes()
     {
         var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -267,8 +376,16 @@ public class IntegrationSmokeTests
                 streamId,
                 "--backend",
                 "codex",
+                "--model",
+                "codex-model",
+                "--variant",
+                "high",
+                "--agent",
+                "build",
                 "--directory",
                 workspace,
+                "--title",
+                "Slow codex title",
                 "--prompt",
                 "slow fake codex",
                 "--timeout",
@@ -280,11 +397,24 @@ public class IntegrationSmokeTests
             Assert.Equal("running", earlySession["status"]!.GetValue<string>());
             Assert.Equal(missionId, earlySession["missionId"]!.GetValue<string>());
             Assert.Equal(streamId, earlySession["workstreamId"]!.GetValue<string>());
+            Assert.Equal("codex", earlySession["backend"]!.GetValue<string>());
+            Assert.Equal("codex-model", earlySession["model"]!.GetValue<string>());
+            Assert.Equal("high", earlySession["variant"]!.GetValue<string>());
+            Assert.Equal("build", earlySession["agent"]!.GetValue<string>());
+            Assert.Equal(workspace, earlySession["directory"]!.GetValue<string>());
 
             await WaitForCliExit(process, TimeSpan.FromSeconds(30));
             var stdout = await process.StandardOutput.ReadToEndAsync();
             var stderr = await process.StandardError.ReadToEndAsync();
             Assert.True(process.ExitCode == 0, $"harness-cli failed with exit {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+            var output = JsonNode.Parse(stdout)!;
+            Assert.Equal("codex", output["backend"]!.GetValue<string>());
+            Assert.Equal("codex-model", output["model"]!.GetValue<string>());
+            Assert.Equal("high", output["variant"]!.GetValue<string>());
+            Assert.Equal("build", output["agent"]!.GetValue<string>());
+            Assert.Equal(workspace, output["directory"]!.GetValue<string>());
+            Assert.Contains("work-map supervise", output["nextCommands"]![0]!.GetValue<string>());
+            Assert.Contains("last-summary --backend codex", output["nextCommands"]![1]!.GetValue<string>());
 
             var finalSession = await ReadWorkMapSession(workMapStore, earlySession["id"]!.GetValue<string>());
             Assert.Equal("handoff", finalSession["status"]!.GetValue<string>());
@@ -300,6 +430,79 @@ public class IntegrationSmokeTests
             if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
             if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
             if (Directory.Exists(fakeBin)) Directory.Delete(fakeBin, true);
+        }
+    }
+
+    [Fact]
+    public async Task WorkMapSessionRunRoutesGithubCopilotProviderModelThroughOpenCode()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        await using var server = await FakeOpenCodeServer.StartAsync();
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            Directory.CreateDirectory(workspace);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Provider model")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "OpenCode route")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            var result = await RunCli(
+                workMapStore,
+                "work-map",
+                "session",
+                "run",
+                "--mission",
+                missionId,
+                "--stream",
+                streamId,
+                "--backend",
+                "copilot",
+                "--model",
+                "github-copilot/gpt-5.5",
+                "--variant",
+                "high",
+                "--agent",
+                "build",
+                "--directory",
+                workspace,
+                "--server",
+                server.Url,
+                "--prompt",
+                "fake opencode",
+                "--no-reply");
+
+            var output = JsonNode.Parse(result.Stdout)!;
+            Assert.Equal("copilot", output["requestedBackend"]!.GetValue<string>());
+            Assert.Equal("opencode", output["backend"]!.GetValue<string>());
+            Assert.Equal("github-copilot", output["provider"]!.GetValue<string>());
+            Assert.Equal("gpt-5.5", output["model"]!.GetValue<string>());
+            Assert.Equal("high", output["variant"]!.GetValue<string>());
+            Assert.Equal("build", output["agent"]!.GetValue<string>());
+            Assert.Equal(workspace, output["directory"]!.GetValue<string>());
+            Assert.Contains("work-map supervise", output["nextCommands"]![0]!.GetValue<string>());
+            Assert.Contains("last-summary --backend opencode", output["nextCommands"]![1]!.GetValue<string>());
+
+            var sessions = JsonNode.Parse((await RunCli(workMapStore, "work-map", "show", "--mission", missionId)).Stdout)!["sessions"]!.AsArray();
+            var session = Assert.Single(sessions);
+            Assert.Equal("opencode", session!["backend"]!.GetValue<string>());
+            Assert.Equal("github-copilot", session["provider"]!.GetValue<string>());
+            Assert.Equal("gpt-5.5", session["model"]!.GetValue<string>());
+            Assert.Equal("high", session["variant"]!.GetValue<string>());
+            Assert.Equal("build", session["agent"]!.GetValue<string>());
+
+            var promptBody = await server.WaitForPromptBodyAsync();
+            Assert.Equal("build", promptBody["agent"]!.GetValue<string>());
+            Assert.Equal("github-copilot", promptBody["model"]!["providerID"]!.GetValue<string>());
+            Assert.Equal("gpt-5.5", promptBody["model"]!["modelID"]!.GetValue<string>());
+            Assert.Equal("high", promptBody["variant"]!.GetValue<string>());
+            Assert.Equal(workspace, promptBody["directory"]!.GetValue<string>());
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
         }
     }
 
@@ -473,11 +676,19 @@ public class IntegrationSmokeTests
         try
         {
             var help = await RunCli(workMapStore, "help", "work-map");
+            var sessionRunHelp = await RunCli(workMapStore, "work-map", "session", "run", "--help");
 
             Assert.Contains("--access-log FILE", help.Stdout);
             Assert.Contains("manual external backend labels", help.Stdout);
             Assert.Contains("session archive --session ID", help.Stdout);
             Assert.Contains("tailscale serve --bg http://127.0.0.1:4896/", help.Stdout);
+            Assert.Contains("--model MODEL", sessionRunHelp.Stdout);
+            Assert.Contains("--variant NAME", sessionRunHelp.Stdout);
+            Assert.Contains("--reasoning", sessionRunHelp.Stdout);
+            Assert.Contains("--agent NAME", sessionRunHelp.Stdout);
+            Assert.Contains("--directory PATH", sessionRunHelp.Stdout);
+            Assert.Contains("--summary-marker TEXT", sessionRunHelp.Stdout);
+            Assert.Contains("same execution controls as ask", sessionRunHelp.Stdout);
         }
         finally
         {
@@ -490,6 +701,21 @@ public class IntegrationSmokeTests
 
     private static Task<CliResult> RunCliAllowFailure(string workMapStore, params string[] args) =>
         RunCli(workMapStore, null, assertSuccess: false, args);
+
+    private static void AssertNextCommandHints(string text, string missionId, string streamId)
+    {
+        Assert.Contains("Next useful commands:", text);
+        Assert.Contains("harness-cli work-map session run", text);
+        Assert.Contains($"--mission {missionId} --stream {streamId}", text);
+        Assert.Contains("--model github-copilot/gpt-5.5 --variant high --agent build", text);
+        Assert.Contains("harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build", text);
+        Assert.Contains("--prompt-file \"<brief.md>\" --timeout 900", text);
+        Assert.Contains($"harness-cli work-map session link --mission {missionId} --stream {streamId}", text);
+        Assert.Contains("harness-cli last-summary --session <ses_...> --plain", text);
+        Assert.Contains("Use --backend copilot without a github-copilot provider model only for the standalone Copilot CLI backend.", text);
+        Assert.Contains("Use --model github-copilot/gpt-5.5 with work-map session run or harness-cli ask for OpenCode sessions using the GitHub Copilot provider.", text);
+        Assert.DoesNotContain("opencode run", text, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static async Task<CliResult> RunCli(string workMapStore, Action<ProcessStartInfo>? configureStartInfo, params string[] args)
     {
@@ -740,6 +966,159 @@ public class IntegrationSmokeTests
         }
 
         throw new TimeoutException($"Timed out waiting for work-map serve on port {port}: {lastException?.Message}");
+    }
+
+    private sealed class FakeOpenCodeServer : IAsyncDisposable
+    {
+        private const string SessionId = "ses_fake_opencode";
+        private readonly TcpListener _listener;
+        private readonly CancellationTokenSource _cancellation = new();
+        private readonly Task _loop;
+        private readonly TaskCompletionSource<JsonNode> _promptBody = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private FakeOpenCodeServer(TcpListener listener)
+        {
+            _listener = listener;
+            Url = $"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}";
+            _loop = Task.Run(AcceptLoop);
+        }
+
+        public string Url { get; }
+
+        public static Task<FakeOpenCodeServer> StartAsync()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            return Task.FromResult(new FakeOpenCodeServer(listener));
+        }
+
+        public async Task<JsonNode> WaitForPromptBodyAsync()
+        {
+            var completed = await Task.WhenAny(_promptBody.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+            if (completed != _promptBody.Task)
+            {
+                throw new TimeoutException("Timed out waiting for fake OpenCode prompt body.");
+            }
+
+            return await _promptBody.Task;
+        }
+
+        private async Task AcceptLoop()
+        {
+            while (!_cancellation.IsCancellationRequested)
+            {
+                try
+                {
+                    var client = await _listener.AcceptTcpClientAsync(_cancellation.Token);
+                    _ = Task.Run(() => HandleClientAsync(client));
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+            }
+        }
+
+        private async Task HandleClientAsync(TcpClient client)
+        {
+            using (client)
+            {
+                await using var stream = client.GetStream();
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true);
+                var requestLine = await reader.ReadLineAsync();
+                if (requestLine is null)
+                {
+                    return;
+                }
+
+                var parts = requestLine.Split(' ');
+                var method = parts.Length > 0 ? parts[0] : string.Empty;
+                var path = parts.Length > 1 ? parts[1] : "/";
+                var contentLength = 0;
+                string? header;
+                while (!string.IsNullOrEmpty(header = await reader.ReadLineAsync()))
+                {
+                    if (header.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)
+                        && int.TryParse(header["Content-Length:".Length..].Trim(), out var parsed))
+                    {
+                        contentLength = parsed;
+                    }
+                }
+
+                var body = string.Empty;
+                if (contentLength > 0)
+                {
+                    var buffer = new char[contentLength];
+                    var read = 0;
+                    while (read < contentLength)
+                    {
+                        var count = await reader.ReadAsync(buffer, read, contentLength - read);
+                        if (count == 0) break;
+                        read += count;
+                    }
+
+                    body = new string(buffer, 0, read);
+                }
+
+                if (method == "POST" && path.StartsWith("/session?", StringComparison.Ordinal))
+                {
+                    await WriteResponseAsync(stream, "200 OK", """{"id":"ses_fake_opencode"}""");
+                    return;
+                }
+
+                if (method == "GET" && path.StartsWith($"/session/{SessionId}/message", StringComparison.Ordinal))
+                {
+                    await WriteResponseAsync(stream, "200 OK", "[]");
+                    return;
+                }
+
+                if (method == "POST" && path.StartsWith($"/session/{SessionId}/message", StringComparison.Ordinal))
+                {
+                    _promptBody.TrySetResult(JsonNode.Parse(body)!);
+                    await WriteResponseAsync(stream, "204 No Content", string.Empty);
+                    return;
+                }
+
+                if (method == "GET" && path.Equals("/session/status", StringComparison.Ordinal))
+                {
+                    await WriteResponseAsync(stream, "200 OK", """{"ses_fake_opencode":{"type":"idle"}}""");
+                    return;
+                }
+
+                await WriteResponseAsync(stream, "404 Not Found", "{}");
+            }
+        }
+
+        private static async Task WriteResponseAsync(Stream stream, string status, string body)
+        {
+            var bodyBytes = Encoding.UTF8.GetBytes(body);
+            var headers = Encoding.ASCII.GetBytes(
+                $"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\n\r\n");
+            await stream.WriteAsync(headers);
+            if (bodyBytes.Length > 0)
+            {
+                await stream.WriteAsync(bodyBytes);
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _cancellation.Cancel();
+            _listener.Stop();
+            try
+            {
+                await _loop;
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+            {
+            }
+
+            _cancellation.Dispose();
+        }
     }
 
     private static async Task<JsonNode> WaitForAccessLogEntry(string accessLog, string path, string? userAgent = null)
