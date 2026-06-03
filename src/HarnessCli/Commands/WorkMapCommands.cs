@@ -479,6 +479,7 @@ internal static partial class Program
                         Variant = resolved.Variant,
                         Agent = resolved.Agent,
                         Directory = directory,
+                        TimeoutSeconds = options.TimeoutSeconds,
                         Status = "running",
                         CreatedAtUtc = sessionRecord.CreatedAtUtc,
                         UpdatedAtUtc = DateTimeOffset.UtcNow,
@@ -527,8 +528,9 @@ internal static partial class Program
 
             var status = summary is not null
                 ? "handoff"
-                : state?.EffectiveStatus
-                  ?? (async && !wait ? "queued" : "waiting");
+                : async && !wait && (state is null || !IsActiveStatus(state.EffectiveStatus))
+                    ? "queued"
+                    : state?.EffectiveStatus ?? "waiting";
             WorkMapBlockerRecord? blocker = null;
             if (!result.PostResult.IsSuccess)
             {
@@ -575,6 +577,7 @@ internal static partial class Program
                 Variant = resolved.Variant,
                 Agent = resolved.Agent,
                 Directory = directory,
+                TimeoutSeconds = options.TimeoutSeconds,
                 Status = status,
                 CreatedAtUtc = attachedSession?.CreatedAtUtc ?? now,
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
@@ -677,9 +680,11 @@ internal static partial class Program
         using var http = CreateHttpClient(options.Server ?? DefaultServer);
         var backend = CreateBackend(backendKind, new OpenCodeClient(http));
         var backendSession = ToBackendSessionRecord(session, backendKind);
-        var state = await backend.GetSessionStateAsync(backendSession);
-        var summary = await backend.ExtractSummaryAsync(backendSession, options.SummaryMarker);
-        var messages = await backend.GetMessagesAsync(backendSession, options.MessageLimit);
+        var allMessages = await backend.GetMessagesAsync(backendSession, 0);
+        var anchorMessageIndex = LatestUserMessageIndex(allMessages);
+        var state = await backend.GetSessionStateAsync(backendSession, anchorMessageIndex);
+        var summary = await backend.ExtractSummaryAsync(backendSession, options.SummaryMarker, anchorMessageIndex);
+        var messages = LimitBackendMessages(allMessages, options.MessageLimit);
         var incomingMessages = ToWorkMapMessages(messages);
 
         var updated = await store.UpdateAgentSessionAsync(session.Id, current =>
@@ -698,9 +703,33 @@ internal static partial class Program
                 observations.Add(ToWorkMapStatusObservation(state, now));
             }
 
+            var blocker = summary is null && current.FinalHandoff is null
+                ? BuildMissingHandoffBlocker(current, state, allMessages, anchorMessageIndex, options.SummaryMarker, now)
+                : null;
+            if (blocker is not null)
+            {
+                events.Add(new WorkMapEventRecord
+                {
+                    AtUtc = now,
+                    Type = "blockerDetected",
+                    Summary = blocker.Summary
+                });
+            }
+
+            var keepQueued = blocker is null
+                             && summary is null
+                             && current.FinalHandoff is null
+                             && ShouldKeepAsyncSessionQueued(current, state, now);
+
             return current with
             {
-                Status = summary is not null ? "handoff" : state?.EffectiveStatus ?? current.Status,
+                Status = summary is not null
+                    ? "handoff"
+                    : blocker is not null
+                        ? "blocked"
+                        : keepQueued
+                            ? current.Status
+                            : state?.EffectiveStatus ?? current.Status,
                 UpdatedAtUtc = now,
                 Events = events,
                 Messages = MergeWorkMapMessages(current.Messages, incomingMessages),
@@ -709,7 +738,8 @@ internal static partial class Program
                 {
                     AtUtc = now,
                     Text = summary.Text
-                }
+                },
+                Blocker = summary is not null ? null : blocker ?? current.Blocker
             };
         });
         await UpdateSessionParents(store, updated, now, "sessionSynced", state is null ? "No status snapshot returned." : $"Status observed as {state.EffectiveStatus}.");
@@ -2223,6 +2253,81 @@ internal static partial class Program
 
         return records;
     }
+
+    private static IReadOnlyList<BackendMessage> LimitBackendMessages(IReadOnlyList<BackendMessage> messages, int limit)
+    {
+        if (limit <= 0 || messages.Count <= limit)
+        {
+            return messages;
+        }
+
+        return messages.Skip(messages.Count - limit).ToArray();
+    }
+
+    private static int LatestUserMessageIndex(IReadOnlyList<BackendMessage> messages)
+    {
+        for (var index = messages.Count - 1; index >= 0; index--)
+        {
+            if (string.Equals(messages[index].Role, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static WorkMapBlockerRecord? BuildMissingHandoffBlocker(
+        WorkMapAgentSessionRecord session,
+        SessionStateSnapshot? state,
+        IReadOnlyList<BackendMessage> messages,
+        int anchorMessageIndex,
+        string marker,
+        DateTimeOffset now)
+    {
+        if (state is null || IsActiveStatus(state.EffectiveStatus) || !HasSessionWaitExpired(session, now))
+        {
+            return null;
+        }
+
+        var assistantAfterPrompt = messages
+            .Skip(Math.Max(anchorMessageIndex + 1, 0))
+            .Where(message => string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var assistantWithText = assistantAfterPrompt.FirstOrDefault(message => !string.IsNullOrWhiteSpace(message.Text));
+        var evidence = assistantAfterPrompt.Length == 0
+            ? $"Observed status '{state.EffectiveStatus}' after sync with no assistant message after the latest user prompt."
+            : assistantWithText is null
+                ? $"Observed status '{state.EffectiveStatus}' after sync with {assistantAfterPrompt.Length} assistant message(s), but their text was empty."
+                : $"Observed status '{state.EffectiveStatus}' after sync with assistant output after the latest user prompt, but no '{marker}' marker.";
+
+        return new WorkMapBlockerRecord
+        {
+            AtUtc = now,
+            Summary = "Session reached an idle state without a fresh final handoff.",
+            Evidence = evidence
+        };
+    }
+
+    private static bool HasSessionWaitExpired(WorkMapAgentSessionRecord session, DateTimeOffset now)
+    {
+        if (!string.Equals(session.Status, "queued", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var timeoutSeconds = session.TimeoutSeconds.GetValueOrDefault(300);
+        return now - session.CreatedAtUtc >= TimeSpan.FromSeconds(timeoutSeconds);
+    }
+
+    private static bool ShouldKeepAsyncSessionQueued(
+        WorkMapAgentSessionRecord session,
+        SessionStateSnapshot? state,
+        DateTimeOffset now) =>
+        string.Equals(session.Status, "queued", StringComparison.OrdinalIgnoreCase)
+        && state is not null
+        && !IsActiveStatus(state.EffectiveStatus)
+        && !HasSessionWaitExpired(session, now);
 
     private static List<WorkMapMessageRecord> MergeWorkMapMessages(
         IReadOnlyList<WorkMapMessageRecord> existing,
