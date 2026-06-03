@@ -100,6 +100,8 @@ public sealed record WorkMapAgentSessionRecord
 
     public string? Directory { get; init; }
 
+    public int? TimeoutSeconds { get; init; }
+
     public string Status { get; init; } = "planned";
 
     public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
