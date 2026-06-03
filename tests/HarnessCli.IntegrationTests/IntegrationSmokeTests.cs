@@ -586,6 +586,73 @@ public class IntegrationSmokeTests
         }
     }
 
+    [Theory]
+    [InlineData("[]", "no assistant message")]
+    [InlineData("""[{"info":{"id":"msg_empty","role":"assistant"},"parts":[{"id":"part_empty","type":"text","text":""}]}]""", "text was empty")]
+    [InlineData("""[{"info":{"id":"msg_no_handoff","role":"assistant"},"parts":[{"id":"part_no_handoff","type":"text","text":"READY"}]}]""", "no 'FINAL HANDOFF' marker")]
+    public async Task WorkMapSessionSyncKeepsAsyncRunQueuedUntilTimeoutThenBlocksIdleProviderSessionWithoutFreshHandoff(string messagesJson, string expectedEvidence)
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        await using var server = await FakeOpenCodeServer.StartAsync(messagesJson);
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            Directory.CreateDirectory(workspace);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Provider no handoff")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "OpenCode idle")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            var run = JsonNode.Parse((await RunCli(
+                workMapStore,
+                "work-map",
+                "session",
+                "run",
+                "--mission",
+                missionId,
+                "--stream",
+                streamId,
+                "--backend",
+                "copilot",
+                "--model",
+                "github-copilot/gpt-5.5",
+                "--variant",
+                "high",
+                "--agent",
+                "build",
+                "--directory",
+                workspace,
+                "--server",
+                server.Url,
+                "--prompt",
+                "fake opencode",
+                "--timeout",
+                "1",
+                "--async")).Stdout)!;
+
+            Assert.Equal("opencode", run["backend"]!.GetValue<string>());
+            Assert.Equal("queued", run["status"]!.GetValue<string>());
+            var sessionId = run["sessionID"]!.GetValue<string>();
+
+            var firstSync = JsonNode.Parse((await RunCli(workMapStore, "work-map", "session", "sync", "--session", sessionId, "--server", server.Url)).Stdout)!;
+            Assert.Equal("queued", firstSync["status"]!.GetValue<string>());
+            Assert.Null(firstSync["blocker"]);
+
+            await Task.Delay(TimeSpan.FromMilliseconds(1100));
+            var synced = JsonNode.Parse((await RunCli(workMapStore, "work-map", "session", "sync", "--session", sessionId, "--server", server.Url)).Stdout)!;
+
+            Assert.Equal("blocked", synced["status"]!.GetValue<string>());
+            Assert.Contains("without a fresh final handoff", synced["blocker"]!["summary"]!.GetValue<string>());
+            Assert.Contains(expectedEvidence, synced["blocker"]!["evidence"]!.GetValue<string>());
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+        }
+    }
+
     [Fact]
     public async Task WorkMapSessionRunForwardsCopilotPermissionFlags()
     {
@@ -1088,20 +1155,23 @@ public class IntegrationSmokeTests
         private readonly Task _loop;
         private readonly TaskCompletionSource<JsonNode> _promptBody = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        private FakeOpenCodeServer(TcpListener listener)
+        private FakeOpenCodeServer(TcpListener listener, string messagesJson)
         {
             _listener = listener;
+            MessagesJson = messagesJson;
             Url = $"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}";
             _loop = Task.Run(AcceptLoop);
         }
 
+        private string MessagesJson { get; }
+
         public string Url { get; }
 
-        public static Task<FakeOpenCodeServer> StartAsync()
+        public static Task<FakeOpenCodeServer> StartAsync(string messagesJson = "[]")
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
-            return Task.FromResult(new FakeOpenCodeServer(listener));
+            return Task.FromResult(new FakeOpenCodeServer(listener, messagesJson));
         }
 
         public async Task<JsonNode> WaitForPromptBodyAsync()
@@ -1184,7 +1254,14 @@ public class IntegrationSmokeTests
 
                 if (method == "GET" && path.StartsWith($"/session/{SessionId}/message", StringComparison.Ordinal))
                 {
-                    await WriteResponseAsync(stream, "200 OK", "[]");
+                    await WriteResponseAsync(stream, "200 OK", MessagesJson);
+                    return;
+                }
+
+                if (method == "POST" && path.StartsWith($"/session/{SessionId}/prompt_async", StringComparison.Ordinal))
+                {
+                    _promptBody.TrySetResult(JsonNode.Parse(body)!);
+                    await WriteResponseAsync(stream, "204 No Content", string.Empty);
                     return;
                 }
 
