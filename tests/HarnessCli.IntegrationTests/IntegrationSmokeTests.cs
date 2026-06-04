@@ -25,16 +25,16 @@ public class IntegrationSmokeTests
         try
         {
             Directory.CreateDirectory(tempRoot);
-            var mission = JsonNode.Parse((await RunCli(tempRoot, "work-map", "create", "--title", "Fan out")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(tempRoot, "cell", "create", "--title", "Fan out")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
 
-            await RunCli(tempRoot, "work-map", "stream", "add", "--mission", missionId, "--name", "API slice", "--status", "planned");
-            await RunCli(tempRoot, "work-map", "stream", "add", "--mission", missionId, "--name", "Done slice", "--status", "complete");
-            var linkedStream = JsonNode.Parse((await RunCli(tempRoot, "work-map", "stream", "add", "--mission", missionId, "--name", "Linked slice")).Stdout)!;
+            await RunCli(tempRoot, "cell", "stream", "add", "--cell", missionId, "--name", "API slice", "--status", "planned");
+            await RunCli(tempRoot, "cell", "stream", "add", "--cell", missionId, "--name", "Done slice", "--status", "complete");
+            var linkedStream = JsonNode.Parse((await RunCli(tempRoot, "cell", "stream", "add", "--cell", missionId, "--name", "Linked slice")).Stdout)!;
             var linkedStreamId = linkedStream["id"]!.GetValue<string>();
-            await RunCli(tempRoot, "work-map", "session", "link", "--mission", missionId, "--stream", linkedStreamId, "--session", "codex-existing", "--backend", "codex");
+            await RunCli(tempRoot, "cell", "session", "link", "--cell", missionId, "--stream", linkedStreamId, "--session", "codex-existing", "--backend", "codex");
 
-            var launch = JsonNode.Parse((await RunCli(tempRoot, "work-map", "launch", "--mission", missionId, "--dry-run")).Stdout)!;
+            var launch = JsonNode.Parse((await RunCli(tempRoot, "cell", "launch", "--cell", missionId, "--dry-run")).Stdout)!;
 
             Assert.Equal("codex", launch["backend"]!.GetValue<string>());
             Assert.True(launch["dryRun"]!.GetValue<bool>());
@@ -59,19 +59,22 @@ public class IntegrationSmokeTests
         {
             Directory.CreateDirectory(sourceStore);
             Directory.CreateDirectory(targetStore);
-            var mission = JsonNode.Parse((await RunCli(sourceStore, "work-map", "create", "--title", "Snapshot")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(sourceStore, "cell", "create", "--title", "Snapshot")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(sourceStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Portable slice")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(sourceStore, "cell", "stream", "add", "--cell", missionId, "--name", "Portable slice")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
-            await RunCli(sourceStore, "work-map", "session", "link", "--mission", missionId, "--stream", streamId, "--session", "codex-portable", "--backend", "codex");
+            await RunCli(sourceStore, "cell", "session", "link", "--cell", missionId, "--stream", streamId, "--session", "codex-portable", "--backend", "codex");
 
-            await RunCli(sourceStore, "work-map", "store", "export", "--output", snapshot);
+            await RunCli(sourceStore, "cell", "store", "export", "--output", snapshot);
             Assert.True(File.Exists(snapshot));
+            var exported = JsonNode.Parse(await File.ReadAllTextAsync(snapshot))!;
+            Assert.Equal("cellStoreSnapshot", exported["kind"]!.GetValue<string>());
 
-            await RunCli(targetStore, "work-map", "store", "import", "--file", snapshot);
-            var info = JsonNode.Parse((await RunCli(targetStore, "work-map", "store", "info")).Stdout)!;
+            await RunCli(targetStore, "cell", "store", "import", "--file", snapshot);
+            var info = JsonNode.Parse((await RunCli(targetStore, "cell", "store", "info")).Stdout)!;
 
             Assert.Equal("json-directory", info["provider"]!.GetValue<string>());
+            Assert.Equal(1, info["cells"]!.GetValue<int>());
             Assert.Equal(1, info["missions"]!.GetValue<int>());
             Assert.Equal(1, info["workstreams"]!.GetValue<int>());
             Assert.Equal(1, info["sessions"]!.GetValue<int>());
@@ -85,6 +88,86 @@ public class IntegrationSmokeTests
     }
 
     [Fact]
+    public async Task WorkMapStoreImportsLegacyWorkMapSnapshot()
+    {
+        var targetStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var snapshot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            Directory.CreateDirectory(targetStore);
+            var legacyMissionId = "mission-legacy";
+            var now = DateTimeOffset.UtcNow.ToString("O");
+            var legacySnapshot = new JsonObject
+            {
+                ["schemaVersion"] = 1,
+                ["kind"] = "workMapSnapshot",
+                ["exportedAtUtc"] = now,
+                ["missions"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["schemaVersion"] = 1,
+                        ["kind"] = "mission",
+                        ["id"] = legacyMissionId,
+                        ["title"] = "Legacy mission",
+                        ["status"] = "planned",
+                        ["createdAtUtc"] = now,
+                        ["updatedAtUtc"] = now
+                    }
+                },
+                ["workstreams"] = new JsonArray(),
+                ["sessions"] = new JsonArray()
+            };
+            await File.WriteAllTextAsync(snapshot, legacySnapshot.ToJsonString());
+
+            await RunCli(targetStore, "cell", "store", "import", "--file", snapshot);
+            var shown = JsonNode.Parse((await RunCli(targetStore, "cell", "show", "--cell", legacyMissionId)).Stdout)!;
+
+            var record = shown["cell"] ?? shown["mission"]!;
+            Assert.Equal(legacyMissionId, record["id"]!.GetValue<string>());
+            Assert.Equal("mission", record["kind"]!.GetValue<string>());
+        }
+        finally
+        {
+            if (Directory.Exists(targetStore)) Directory.Delete(targetStore, true);
+            if (File.Exists(snapshot)) File.Delete(snapshot);
+        }
+    }
+
+    [Fact]
+    public async Task WorkMapForkCreatesRecursiveChildCellLink()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            var parent = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Parent cell")).Stdout)!;
+            var parentId = parent["id"]!.GetValue<string>();
+
+            var child = JsonNode.Parse((await RunCli(workMapStore, "cell", "fork", "--cell", parentId, "--title", "Child cell", "--intent", "Recursive slice")).Stdout)!;
+            var childId = child["id"]!.GetValue<string>();
+
+            Assert.StartsWith("cell-", parentId, StringComparison.Ordinal);
+            Assert.StartsWith("cell-", childId, StringComparison.Ordinal);
+            Assert.Equal("cell", parent["kind"]!.GetValue<string>());
+            Assert.Equal("cell", child["kind"]!.GetValue<string>());
+            Assert.Equal(parentId, child["parentCellId"]!.GetValue<string>());
+
+            var shown = JsonNode.Parse((await RunCli(workMapStore, "cell", "show", "--cell", parentId)).Stdout)!;
+            var parentRecord = shown["cell"] ?? shown["mission"]!;
+            Assert.Contains(parentRecord["childCellIds"]!.AsArray(), item => item!.GetValue<string>() == childId);
+            Assert.Contains(parentRecord["edges"]!.AsArray(), item =>
+                item!["fromId"]!.GetValue<string>() == parentId
+                && item!["toId"]!.GetValue<string>() == childId
+                && item!["kind"]!.GetValue<string>() == "contains");
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+        }
+    }
+
+    [Fact]
     public async Task WorkMapSessionSyncUsesPortableSessionRecordWithoutRegistry()
     {
         var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -93,17 +176,17 @@ public class IntegrationSmokeTests
         {
             Directory.CreateDirectory(workMapStore);
             Directory.CreateDirectory(workspace);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Portable sync")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Portable sync")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Imported session")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Imported session")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
             await RunCli(
                 workMapStore,
-                "work-map",
+                "cell",
                 "session",
                 "link",
-                "--mission",
+                "--cell",
                 missionId,
                 "--stream",
                 streamId,
@@ -128,7 +211,7 @@ public class IntegrationSmokeTests
                 [{"Id":"msg_1","Role":"assistant","Text":"FINAL HANDOFF\nportable sync works","PartId":"part_1","Timestamp":"2026-01-01T12:00:00+00:00"}]
                 """);
 
-            var synced = JsonNode.Parse((await RunCli(workMapStore, "work-map", "session", "sync", "--session", "codex-imported")).Stdout)!;
+            var synced = JsonNode.Parse((await RunCli(workMapStore, "cell", "session", "sync", "--session", "codex-imported")).Stdout)!;
 
             Assert.Equal("handoff", synced["status"]!.GetValue<string>());
             Assert.Contains("portable sync works", synced["finalHandoff"]!["text"]!.GetValue<string>());
@@ -147,17 +230,17 @@ public class IntegrationSmokeTests
         try
         {
             Directory.CreateDirectory(workMapStore);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "External worker")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "External worker")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Background shipper")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Background shipper")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
             var linked = JsonNode.Parse((await RunCli(
                 workMapStore,
-                "work-map",
+                "cell",
                 "session",
                 "link",
-                "--mission",
+                "--cell",
                 missionId,
                 "--stream",
                 streamId,
@@ -171,13 +254,13 @@ public class IntegrationSmokeTests
             Assert.Equal("shipper", linked["backend"]!.GetValue<string>());
             Assert.Equal("running", linked["status"]!.GetValue<string>());
 
-            var synced = JsonNode.Parse((await RunCli(workMapStore, "work-map", "session", "sync", "--mission", missionId, "--all")).Stdout)!.AsArray();
+            var synced = JsonNode.Parse((await RunCli(workMapStore, "cell", "session", "sync", "--cell", missionId, "--all")).Stdout)!.AsArray();
             Assert.Single(synced);
             Assert.Equal("running", synced[0]!["status"]!.GetValue<string>());
             Assert.Equal("shipper", synced[0]!["backend"]!.GetValue<string>());
             Assert.Contains(synced[0]!["events"]!.AsArray(), item => item?["type"]?.GetValue<string>() == "syncSkipped");
 
-            var supervision = JsonNode.Parse((await RunCli(workMapStore, "work-map", "supervise", "--mission", missionId, "--max-runs", "1")).Stdout)!;
+            var supervision = JsonNode.Parse((await RunCli(workMapStore, "cell", "supervise", "--cell", missionId, "--max-runs", "1")).Stdout)!;
             Assert.Equal(1, supervision["active"]!.GetValue<int>());
             Assert.Equal(0, supervision["blocked"]!.GetValue<int>());
         }
@@ -194,16 +277,16 @@ public class IntegrationSmokeTests
         try
         {
             Directory.CreateDirectory(workMapStore);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Relaunch")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Relaunch")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Retry slice")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Retry slice")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
             await RunCli(
                 workMapStore,
-                "work-map",
+                "cell",
                 "session",
                 "link",
-                "--mission",
+                "--cell",
                 missionId,
                 "--stream",
                 streamId,
@@ -213,9 +296,9 @@ public class IntegrationSmokeTests
                 "shipper",
                 "--status",
                 "blocked");
-            await RunCli(workMapStore, "work-map", "session", "archive", "--session", "stale-shipper");
+            await RunCli(workMapStore, "cell", "session", "archive", "--session", "stale-shipper");
 
-            var launch = JsonNode.Parse((await RunCli(workMapStore, "work-map", "launch", "--mission", missionId, "--dry-run")).Stdout)!;
+            var launch = JsonNode.Parse((await RunCli(workMapStore, "cell", "launch", "--cell", missionId, "--dry-run")).Stdout)!;
 
             Assert.Equal(1, launch["eligible"]!.GetValue<int>());
             Assert.Equal(1, launch["launchedCount"]!.GetValue<int>());
@@ -234,27 +317,27 @@ public class IntegrationSmokeTests
         try
         {
             Directory.CreateDirectory(workMapStore);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Hints")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Hints")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Hinted stream");
+            await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Hinted stream");
 
-            var shown = await RunCli(workMapStore, "work-map", "show", "--mission", missionId);
+            var shown = await RunCli(workMapStore, "cell", "show", "--cell", missionId);
             var bundle = JsonNode.Parse(shown.Stdout)!;
             Assert.Equal(missionId, bundle["mission"]!["id"]!.GetValue<string>());
             AssertNextActionHint(shown, missionId);
 
-            var markdown = await RunCli(workMapStore, "work-map", "show", "--mission", missionId, "--format", "md");
+            var markdown = await RunCli(workMapStore, "cell", "show", "--cell", missionId, "--format", "md");
             Assert.Contains("# Hints", markdown.Stdout);
             AssertInlineNextCommandHints(markdown.Stdout, missionId, "<stream>");
             AssertNextActionHint(markdown, missionId);
 
             var markdownPath = Path.Combine(workMapStore, "show.md");
-            var markdownOutput = await RunCli(workMapStore, "work-map", "show", "--mission", missionId, "--format", "md", "--output", markdownPath);
+            var markdownOutput = await RunCli(workMapStore, "cell", "show", "--cell", missionId, "--format", "md", "--output", markdownPath);
             Assert.Empty(markdownOutput.Stdout);
             Assert.DoesNotContain("Next useful commands:", await File.ReadAllTextAsync(markdownPath));
             AssertNextActionHint(markdownOutput, missionId);
 
-            var html = await RunCli(workMapStore, "work-map", "show", "--mission", missionId, "--format", "html");
+            var html = await RunCli(workMapStore, "cell", "show", "--cell", missionId, "--format", "html");
             Assert.Contains("<!doctype html>", html.Stdout);
             AssertNextActionHint(html, missionId);
         }
@@ -273,15 +356,15 @@ public class IntegrationSmokeTests
         {
             Directory.CreateDirectory(workMapStore);
             Directory.CreateDirectory(workspace);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Stream hints")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Stream hints")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
 
             var added = await RunCli(
                 workMapStore,
-                "work-map",
+                "cell",
                 "stream",
                 "add",
-                "--mission",
+                "--cell",
                 missionId,
                 "--name",
                 "Worker slice",
@@ -299,10 +382,10 @@ public class IntegrationSmokeTests
 
             var nonDefaultFormat = await RunCli(
                 workMapStore,
-                "work-map",
+                "cell",
                 "stream",
                 "add",
-                "--mission",
+                "--cell",
                 missionId,
                 "--name",
                 "Format tolerant",
@@ -325,16 +408,16 @@ public class IntegrationSmokeTests
         try
         {
             Directory.CreateDirectory(workMapStore);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Mutation hints")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Mutation hints")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Evidence stream")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Evidence stream")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
-            var updated = await RunCli(workMapStore, "work-map", "mission", "update", "--mission", missionId, "--status", "in-progress");
+            var updated = await RunCli(workMapStore, "cell", "mission", "update", "--cell", missionId, "--status", "in-progress");
             _ = JsonNode.Parse(updated.Stdout)!;
             AssertNextActionHint(updated, missionId);
 
-            var evidence = await RunCli(workMapStore, "work-map", "evidence", "add", "--mission", missionId, "--stream", streamId, "--summary", "Useful fact");
+            var evidence = await RunCli(workMapStore, "cell", "evidence", "add", "--cell", missionId, "--stream", streamId, "--summary", "Useful fact");
             _ = JsonNode.Parse(evidence.Stdout)!;
             AssertNextActionHint(evidence, missionId, streamId);
         }
@@ -355,56 +438,56 @@ public class IntegrationSmokeTests
             Directory.CreateDirectory(workMapStore);
             Directory.CreateDirectory(workspace);
 
-            var create = await RunCli(workMapStore, "work-map", "create", "--title", "Agent hints", "--intent", "Keep agents routed");
+            var create = await RunCli(workMapStore, "cell", "create", "--title", "Agent hints", "--intent", "Keep agents routed");
             var mission = JsonNode.Parse(create.Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
             AssertNextActionHint(create, missionId);
 
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "list"), missionId: null);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "list", "--format", "md"), missionId: null);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "list"), missionId: null);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "list", "--format", "md"), missionId: null);
 
-            var streamAdd = await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Agent stream", "--role", "builder", "--clone", workspace);
+            var streamAdd = await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Agent stream", "--role", "builder", "--clone", workspace);
             var stream = JsonNode.Parse(streamAdd.Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
             AssertNextActionHint(streamAdd, missionId, streamId);
 
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "show", "--mission", missionId), missionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "brief", "--mission", missionId, "--stream", streamId), missionId, streamId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "stream", "update", "--mission", missionId, "--stream", streamId, "--status", "in-progress"), missionId, streamId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "show", "--cell", missionId), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "brief", "--cell", missionId, "--stream", streamId), missionId, streamId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "stream", "update", "--cell", missionId, "--stream", streamId, "--status", "in-progress"), missionId, streamId);
 
             const string sessionId = "external-agent-session";
-            var linkHint = AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "link", "--mission", missionId, "--stream", streamId, "--session", sessionId, "--backend", "external", "--role", "builder"), missionId, streamId, sessionId);
+            var linkHint = AssertNextActionHint(await RunCli(workMapStore, "cell", "session", "link", "--cell", missionId, "--stream", streamId, "--session", sessionId, "--backend", "external", "--role", "builder"), missionId, streamId, sessionId);
             Assert.DoesNotContain("last-summary --backend external", linkHint.ToJsonString(), StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("work-map session handoff", linkHint.ToJsonString(), StringComparison.OrdinalIgnoreCase);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "update", "--session", sessionId, "--status", "running"), missionId, streamId, sessionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "handoff", "--session", sessionId, "--summary", "handoff ready"), missionId, streamId, sessionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "blocker", "set", "--session", sessionId, "--summary", "blocked for test"), missionId, streamId, sessionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "verify", "--session", sessionId, "--kind", "parent-review", "--result", "pass", "--summary", "looks good"), missionId, streamId, sessionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "sync", "--session", sessionId), missionId, streamId, sessionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "sync", "--mission", missionId, "--all"), missionId);
+            Assert.Contains("cell session handoff", linkHint.ToJsonString(), StringComparison.OrdinalIgnoreCase);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "session", "update", "--session", sessionId, "--status", "running"), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "session", "handoff", "--session", sessionId, "--summary", "handoff ready"), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "session", "blocker", "set", "--session", sessionId, "--summary", "blocked for test"), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "session", "verify", "--session", sessionId, "--kind", "parent-review", "--result", "pass", "--summary", "looks good"), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "session", "sync", "--session", sessionId), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "session", "sync", "--cell", missionId, "--all"), missionId);
 
-            var evidenceAdd = await RunCli(workMapStore, "work-map", "evidence", "add", "--mission", missionId, "--stream", streamId, "--summary", "agent fact");
+            var evidenceAdd = await RunCli(workMapStore, "cell", "evidence", "add", "--cell", missionId, "--stream", streamId, "--summary", "agent fact");
             var evidenceId = JsonNode.Parse(evidenceAdd.Stdout)!["id"]!.GetValue<string>();
             AssertNextActionHint(evidenceAdd, missionId, streamId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "evidence", "remove", "--mission", missionId, "--stream", streamId, "--evidence-id", evidenceId), missionId, streamId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "evidence", "remove", "--cell", missionId, "--stream", streamId, "--evidence-id", evidenceId), missionId, streamId);
 
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "launch", "--mission", missionId, "--dry-run"), missionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "supervise", "--mission", missionId, "--max-runs", "1"), missionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "store", "info"), missionId: null);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "launch", "--cell", missionId, "--dry-run"), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "supervise", "--cell", missionId, "--max-runs", "1"), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "store", "info"), missionId: null);
 
-            var export = await RunCli(workMapStore, "work-map", "store", "export", "--output", snapshot);
+            var export = await RunCli(workMapStore, "cell", "store", "export", "--output", snapshot);
             Assert.Empty(export.Stdout);
             AssertNextActionHint(export, missionId: null);
             _ = JsonNode.Parse(await File.ReadAllTextAsync(snapshot))!;
-            var importConflict = await RunCliAllowFailure(workMapStore, "work-map", "store", "import", "--file", snapshot, "--dry-run");
+            var importConflict = await RunCliAllowFailure(workMapStore, "cell", "store", "import", "--file", snapshot, "--dry-run");
             Assert.Equal(1, importConflict.ExitCode);
             AssertNextActionHint(importConflict, missionId: null);
 
-            AssertNextActionHint(await RunCli(workMapStore, "help", "work-map"), missionId: null);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "--help"), missionId: null);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "session", "archive", "--session", sessionId), missionId, streamId, sessionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "stream", "delete", "--mission", missionId, "--stream", streamId, "--force"), missionId);
-            AssertNextActionHint(await RunCli(workMapStore, "work-map", "mission", "update", "--mission", missionId, "--status", "done"), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "help", "cell"), missionId: null);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "--help"), missionId: null);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "session", "archive", "--session", sessionId), missionId, streamId, sessionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "stream", "delete", "--cell", missionId, "--stream", streamId, "--force"), missionId);
+            AssertNextActionHint(await RunCli(workMapStore, "cell", "mission", "update", "--cell", missionId, "--status", "done"), missionId);
         }
         finally
         {
@@ -428,9 +511,9 @@ public class IntegrationSmokeTests
             Directory.CreateDirectory(fakeBin);
             CreateFakeSlowCodex(fakeBin);
 
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Visible run")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Visible run")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Slow codex")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Slow codex")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
             process = StartCliProcess(
@@ -441,14 +524,14 @@ public class IntegrationSmokeTests
                         ? existingPath
                         : Environment.GetEnvironmentVariable("PATH");
                     startInfo.Environment["PATH"] = fakeBin + Path.PathSeparator + path;
-                    startInfo.Environment["HARNESS_CLI_CODEX_BINARY"] = OperatingSystem.IsWindows()
+                    startInfo.Environment["AEGIS_CODEX_BINARY"] = OperatingSystem.IsWindows()
                         ? Path.Combine(fakeBin, "codex.cmd")
                         : Path.Combine(fakeBin, "codex");
                 },
-                "work-map",
+                "cell",
                 "session",
                 "run",
-                "--mission",
+                "--cell",
                 missionId,
                 "--stream",
                 streamId,
@@ -484,14 +567,14 @@ public class IntegrationSmokeTests
             await WaitForCliExit(process, TimeSpan.FromSeconds(30));
             var stdout = await process.StandardOutput.ReadToEndAsync();
             var stderr = await process.StandardError.ReadToEndAsync();
-            Assert.True(process.ExitCode == 0, $"harness-cli failed with exit {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+            Assert.True(process.ExitCode == 0, $"aegis failed with exit {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
             var output = JsonNode.Parse(stdout)!;
             Assert.Equal("codex", output["backend"]!.GetValue<string>());
             Assert.Equal("codex-model", output["model"]!.GetValue<string>());
             Assert.Equal("high", output["variant"]!.GetValue<string>());
             Assert.Equal("build", output["agent"]!.GetValue<string>());
             Assert.Equal(workspace, output["directory"]!.GetValue<string>());
-            Assert.Contains("work-map supervise", output["nextCommands"]![0]!.GetValue<string>());
+            Assert.Contains("cell supervise", output["nextCommands"]![0]!.GetValue<string>());
             Assert.Contains("last-summary --backend codex", output["nextCommands"]![1]!.GetValue<string>());
             AssertNextActionHint(new CliResult(process.ExitCode, stdout, stderr), missionId, streamId, output["sessionID"]!.GetValue<string>());
 
@@ -522,17 +605,17 @@ public class IntegrationSmokeTests
         {
             Directory.CreateDirectory(workMapStore);
             Directory.CreateDirectory(workspace);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Provider model")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Provider model")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "OpenCode route")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "OpenCode route")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
             var result = await RunCli(
                 workMapStore,
-                "work-map",
+                "cell",
                 "session",
                 "run",
-                "--mission",
+                "--cell",
                 missionId,
                 "--stream",
                 streamId,
@@ -560,11 +643,11 @@ public class IntegrationSmokeTests
             Assert.Equal("high", output["variant"]!.GetValue<string>());
             Assert.Equal("build", output["agent"]!.GetValue<string>());
             Assert.Equal(workspace, output["directory"]!.GetValue<string>());
-            Assert.Contains("work-map supervise", output["nextCommands"]![0]!.GetValue<string>());
+            Assert.Contains("cell supervise", output["nextCommands"]![0]!.GetValue<string>());
             Assert.Contains("last-summary --backend opencode", output["nextCommands"]![1]!.GetValue<string>());
             AssertNextActionHint(result, missionId, streamId, output["sessionID"]!.GetValue<string>());
 
-            var sessions = JsonNode.Parse((await RunCli(workMapStore, "work-map", "show", "--mission", missionId)).Stdout)!["sessions"]!.AsArray();
+            var sessions = JsonNode.Parse((await RunCli(workMapStore, "cell", "show", "--cell", missionId)).Stdout)!["sessions"]!.AsArray();
             var session = Assert.Single(sessions);
             Assert.Equal("opencode", session!["backend"]!.GetValue<string>());
             Assert.Equal("github-copilot", session["provider"]!.GetValue<string>());
@@ -599,17 +682,17 @@ public class IntegrationSmokeTests
         {
             Directory.CreateDirectory(workMapStore);
             Directory.CreateDirectory(workspace);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Provider no handoff")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Provider no handoff")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "OpenCode idle")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "OpenCode idle")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
             var run = JsonNode.Parse((await RunCli(
                 workMapStore,
-                "work-map",
+                "cell",
                 "session",
                 "run",
-                "--mission",
+                "--cell",
                 missionId,
                 "--stream",
                 streamId,
@@ -635,12 +718,12 @@ public class IntegrationSmokeTests
             Assert.Equal("queued", run["status"]!.GetValue<string>());
             var sessionId = run["sessionID"]!.GetValue<string>();
 
-            var firstSync = JsonNode.Parse((await RunCli(workMapStore, "work-map", "session", "sync", "--session", sessionId, "--server", server.Url)).Stdout)!;
+            var firstSync = JsonNode.Parse((await RunCli(workMapStore, "cell", "session", "sync", "--session", sessionId, "--server", server.Url)).Stdout)!;
             Assert.Equal("queued", firstSync["status"]!.GetValue<string>());
             Assert.Null(firstSync["blocker"]);
 
             await Task.Delay(TimeSpan.FromMilliseconds(1100));
-            var synced = JsonNode.Parse((await RunCli(workMapStore, "work-map", "session", "sync", "--session", sessionId, "--server", server.Url)).Stdout)!;
+            var synced = JsonNode.Parse((await RunCli(workMapStore, "cell", "session", "sync", "--session", sessionId, "--server", server.Url)).Stdout)!;
 
             Assert.Equal("blocked", synced["status"]!.GetValue<string>());
             Assert.Contains("without a fresh final handoff", synced["blocker"]!["summary"]!.GetValue<string>());
@@ -666,9 +749,9 @@ public class IntegrationSmokeTests
             Directory.CreateDirectory(fakeBin);
             var argsPath = CreateFakeCopilot(fakeBin);
 
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Copilot flags")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Copilot flags")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Copilot slice")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Copilot slice")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
             await RunCli(
@@ -679,14 +762,14 @@ public class IntegrationSmokeTests
                         ? existingPath
                         : Environment.GetEnvironmentVariable("PATH");
                     startInfo.Environment["PATH"] = fakeBin + Path.PathSeparator + path;
-                    startInfo.Environment["HARNESS_CLI_COPILOT_BINARY"] = OperatingSystem.IsWindows()
+                    startInfo.Environment["AEGIS_COPILOT_BINARY"] = OperatingSystem.IsWindows()
                         ? Path.Combine(fakeBin, "fake-copilot.ps1")
                         : Path.Combine(fakeBin, "copilot");
                 },
-                "work-map",
+                "cell",
                 "session",
                 "run",
-                "--mission",
+                "--cell",
                 missionId,
                 "--stream",
                 streamId,
@@ -731,17 +814,17 @@ public class IntegrationSmokeTests
         {
             Directory.CreateDirectory(workMapStore);
             Directory.CreateDirectory(workspace);
-            var mission = JsonNode.Parse((await RunCli(workMapStore, "work-map", "create", "--title", "Copilot async")).Stdout)!;
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Copilot async")).Stdout)!;
             var missionId = mission["id"]!.GetValue<string>();
-            var stream = JsonNode.Parse((await RunCli(workMapStore, "work-map", "stream", "add", "--mission", missionId, "--name", "Rejected async")).Stdout)!;
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Rejected async")).Stdout)!;
             var streamId = stream["id"]!.GetValue<string>();
 
             var result = await RunCliAllowFailure(
                 workMapStore,
-                "work-map",
+                "cell",
                 "session",
                 "run",
-                "--mission",
+                "--cell",
                 missionId,
                 "--stream",
                 streamId,
@@ -777,7 +860,7 @@ public class IntegrationSmokeTests
             Directory.CreateDirectory(workMapStore);
             process = StartCliProcess(
                 workMapStore,
-                "work-map",
+                "cell",
                 "serve",
                 "--host",
                 "127.0.0.1",
@@ -793,6 +876,12 @@ public class IntegrationSmokeTests
             using var response = await http.GetAsync($"http://127.0.0.1:{port}/api/health");
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var cellsResponse = await http.GetAsync($"http://127.0.0.1:{port}/api/cells");
+            Assert.Equal(HttpStatusCode.OK, cellsResponse.StatusCode);
+            var cellsPayload = JsonNode.Parse(await cellsResponse.Content.ReadAsStringAsync())!;
+            Assert.NotNull(cellsPayload["cells"]);
+            Assert.NotNull(cellsPayload["missions"]);
+
             var entry = await WaitForAccessLogEntry(accessLog, "/api/health", "HarnessCliTest/1.0");
 
             Assert.Equal("GET", entry["method"]!.GetValue<string>());
@@ -822,8 +911,8 @@ public class IntegrationSmokeTests
         var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         try
         {
-            var help = await RunCli(workMapStore, "help", "work-map");
-            var sessionRunHelp = await RunCli(workMapStore, "work-map", "session", "run", "--help");
+            var help = await RunCli(workMapStore, "help", "cell");
+            var sessionRunHelp = await RunCli(workMapStore, "cell", "session", "run", "--help");
 
             Assert.Contains("--access-log FILE", help.Stdout);
             Assert.Contains("manual external backend labels", help.Stdout);
@@ -854,14 +943,14 @@ public class IntegrationSmokeTests
     private static JsonNode AssertNextActionHint(CliResult result, string? missionId = null, string? streamId = null, string? sessionId = null)
     {
         var hint = ReadNextActionHint(result.Stderr);
-        Assert.Equal("work-map-next-action", hint["kind"]!.GetValue<string>());
+        Assert.Equal("cell-next-action", hint["kind"]!.GetValue<string>());
         Assert.False(string.IsNullOrWhiteSpace(hint["suggestedNextAction"]!.GetValue<string>()));
         if (missionId is not null) Assert.Equal(missionId, hint["missionID"]!.GetValue<string>());
         if (streamId is not null) Assert.Equal(streamId, hint["streamID"]!.GetValue<string>());
         if (sessionId is not null) Assert.Equal(sessionId, hint["sessionID"]!.GetValue<string>());
         Assert.NotEmpty(hint["nextCommands"]!.AsArray());
         var serialized = hint.ToJsonString();
-        Assert.Contains("harness-cli work-map", serialized);
+        Assert.Contains("aegis cell", serialized);
         Assert.Contains("github-copilot/gpt-5.5", serialized);
         Assert.Contains("standalone Copilot CLI backend", serialized);
         Assert.DoesNotContain("opencode run", serialized, StringComparison.OrdinalIgnoreCase);
@@ -874,25 +963,25 @@ public class IntegrationSmokeTests
         {
             if (!line.StartsWith('{')) continue;
             var parsed = JsonNode.Parse(line);
-            if (parsed?["kind"]?.GetValue<string>() == "work-map-next-action")
+            if (parsed?["kind"]?.GetValue<string>() == "cell-next-action")
             {
                 return parsed;
             }
         }
 
-        throw new InvalidOperationException("No work-map-next-action payload was written to stderr.");
+        throw new InvalidOperationException("No cell-next-action payload was written to stderr.");
     }
 
     private static void AssertInlineNextCommandHints(string text, string missionId, string streamId)
     {
         Assert.Contains("Next useful commands:", text);
-        Assert.Contains("harness-cli work-map session run", text);
-        Assert.Contains($"--mission {missionId} --stream {streamId}", text);
+        Assert.Contains("aegis cell session run", text);
+        Assert.Contains($"--cell {missionId} --stream {streamId}", text);
         Assert.Contains("--model github-copilot/gpt-5.5 --variant high --agent build", text);
-        Assert.Contains("harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build", text);
+        Assert.Contains("aegis ask --model github-copilot/gpt-5.5 --variant high --agent build", text);
         Assert.Contains("--prompt-file \"<brief.md>\" --timeout 900", text);
         Assert.Contains("Use --backend copilot without a github-copilot provider model only for the standalone Copilot CLI backend.", text);
-        Assert.Contains("Use --model github-copilot/gpt-5.5 with work-map session run or harness-cli ask for OpenCode sessions using the GitHub Copilot provider.", text);
+        Assert.Contains("Use --model github-copilot/gpt-5.5 with cell session run or aegis ask for OpenCode sessions using the GitHub Copilot provider.", text);
         Assert.DoesNotContain("opencode run", text, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -921,12 +1010,12 @@ public class IntegrationSmokeTests
             startInfo.ArgumentList.Add(arg);
         }
 
-        startInfo.Environment["HARNESS_CLI_WORK_MAP_DIR"] = workMapStore;
-        startInfo.Environment["HARNESS_CLI_SESSION_DIR"] = Path.Combine(workMapStore, "session-registry");
-        startInfo.Environment["HARNESS_CLI_BACKEND_STATE_DIR"] = Path.Combine(workMapStore, "backend-state");
+        startInfo.Environment["AEGIS_CELL_DIR"] = workMapStore;
+        startInfo.Environment["AEGIS_SESSION_DIR"] = Path.Combine(workMapStore, "session-registry");
+        startInfo.Environment["AEGIS_BACKEND_STATE_DIR"] = Path.Combine(workMapStore, "backend-state");
         configureStartInfo?.Invoke(startInfo);
 
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start harness-cli test process.");
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start aegis test process.");
         process.StandardInput.Close();
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
@@ -938,13 +1027,13 @@ public class IntegrationSmokeTests
         catch (OperationCanceledException)
         {
             process.Kill(entireProcessTree: true);
-            throw new TimeoutException("Timed out waiting for harness-cli test process.");
+            throw new TimeoutException("Timed out waiting for aegis test process.");
         }
 
         var result = new CliResult(process.ExitCode, await stdout, await stderr);
         if (assertSuccess)
         {
-            Assert.True(result.ExitCode == 0, $"harness-cli failed with exit {result.ExitCode}.\nSTDOUT:\n{result.Stdout}\nSTDERR:\n{result.Stderr}");
+            Assert.True(result.ExitCode == 0, $"aegis failed with exit {result.ExitCode}.\nSTDOUT:\n{result.Stdout}\nSTDERR:\n{result.Stderr}");
         }
 
         return result;
@@ -972,12 +1061,12 @@ public class IntegrationSmokeTests
             startInfo.ArgumentList.Add(arg);
         }
 
-        startInfo.Environment["HARNESS_CLI_WORK_MAP_DIR"] = workMapStore;
-        startInfo.Environment["HARNESS_CLI_SESSION_DIR"] = Path.Combine(workMapStore, "session-registry");
-        startInfo.Environment["HARNESS_CLI_BACKEND_STATE_DIR"] = Path.Combine(workMapStore, "backend-state");
+        startInfo.Environment["AEGIS_CELL_DIR"] = workMapStore;
+        startInfo.Environment["AEGIS_SESSION_DIR"] = Path.Combine(workMapStore, "session-registry");
+        startInfo.Environment["AEGIS_BACKEND_STATE_DIR"] = Path.Combine(workMapStore, "backend-state");
         configureStartInfo?.Invoke(startInfo);
 
-        var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start harness-cli test process.");
+        var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start aegis test process.");
         process.StandardInput.Close();
         return process;
     }
@@ -1064,7 +1153,7 @@ public class IntegrationSmokeTests
             {
                 var stdout = await process.StandardOutput.ReadToEndAsync();
                 var stderr = await process.StandardError.ReadToEndAsync();
-                throw new InvalidOperationException($"work-map session run exited before a session record appeared with {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+                throw new InvalidOperationException($"cell session run exited before a session record appeared with {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
             }
 
             var sessionsDirectory = Path.Combine(workMapStore, "sessions");
@@ -1090,7 +1179,7 @@ public class IntegrationSmokeTests
             await Task.Delay(100);
         }
 
-        throw new TimeoutException($"Timed out waiting for a work-map session record for mission {missionId}.");
+        throw new TimeoutException($"Timed out waiting for a cell session record for mission {missionId}.");
     }
 
     private static async Task<JsonNode> ReadWorkMapSession(string workMapStore, string sessionId)
@@ -1109,7 +1198,7 @@ public class IntegrationSmokeTests
         catch (OperationCanceledException)
         {
             process.Kill(entireProcessTree: true);
-            throw new TimeoutException("Timed out waiting for harness-cli test process.");
+            throw new TimeoutException("Timed out waiting for aegis test process.");
         }
     }
 
@@ -1125,7 +1214,7 @@ public class IntegrationSmokeTests
             {
                 var stdout = await process.StandardOutput.ReadToEndAsync();
                 var stderr = await process.StandardError.ReadToEndAsync();
-                throw new InvalidOperationException($"work-map serve exited early with {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+                throw new InvalidOperationException($"cell serve exited early with {process.ExitCode}.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
             }
 
             try
@@ -1144,7 +1233,7 @@ public class IntegrationSmokeTests
             await Task.Delay(200);
         }
 
-        throw new TimeoutException($"Timed out waiting for work-map serve on port {port}: {lastException?.Message}");
+        throw new TimeoutException($"Timed out waiting for cell serve on port {port}: {lastException?.Message}");
     }
 
     private sealed class FakeOpenCodeServer : IAsyncDisposable
@@ -1374,10 +1463,10 @@ public class IntegrationSmokeTests
 
     private static string LocateCliPath()
     {
-        var cliPath = Path.Combine(AppContext.BaseDirectory, "harness-cli.dll");
+        var cliPath = Path.Combine(AppContext.BaseDirectory, "aegis.dll");
         if (!File.Exists(cliPath))
         {
-            cliPath = Path.Combine(LocateRepoRoot(Directory.GetCurrentDirectory()), "src", "HarnessCli", "bin", "Debug", "net10.0", "harness-cli.dll");
+            cliPath = Path.Combine(LocateRepoRoot(Directory.GetCurrentDirectory()), "src", "HarnessCli", "bin", "Debug", "net10.0", "aegis.dll");
         }
 
         return cliPath;

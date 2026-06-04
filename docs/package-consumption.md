@@ -1,13 +1,13 @@
 # Package Consumption
 
-`harness-cli` is being split into libraries Baton can consume without shelling out to the CLI executable.
+Aegis exposes libraries that hosts can consume without shelling out to the CLI executable. The repository and package IDs remain `harness-cli` / `HarnessCli.*` until the repo rename is planned separately.
 
 ## Packages
 
 - `HarnessCli.Core`: shared contracts, session registry infrastructure, state normalization, and prompt rendering.
 - `HarnessCli.Backends`: OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters plus backend command orchestration.
 
-The CLI executable is `harness-cli` and references the same libraries. `opencode-harness-cli` is a migration alias for installed or published command shims, not a separate application identity.
+The CLI executable is `aegis` and references the same libraries. `harness-cli` and `opencode-harness-cli` are migration aliases for installed or published command shims, not separate application identities.
 
 ## Local Pack Smoke
 
@@ -30,7 +30,7 @@ dotnet add package HarnessCli.Backends \
 
 Prompt markdown files are packed as content files and copied to the consumer output so `PromptTemplates` can resolve them at runtime. They are included in both packages because NuGet content files from transitive dependencies are not copied for every consumer shape.
 
-## Baton-Facing API Shape
+## Host-Facing API Shape
 
 Consumers should depend on `IAgentHarness` rather than OpenCode HTTP, Codex CLI, Pi CLI, or GitHub Copilot CLI details:
 
@@ -55,7 +55,7 @@ Backend construction remains explicit so hosts can decide how to instantiate and
 
 ## Backend And Model Profiles
 
-Use `AgentProfileResolver` to keep Baton worker intent separate from backend/model transport details:
+Use `AgentProfileResolver` to keep worker intent separate from backend/model transport details:
 
 ```csharp
 var profiles = new AgentHarnessConfiguration

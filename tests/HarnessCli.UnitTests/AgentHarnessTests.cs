@@ -8,7 +8,7 @@ namespace HarnessCli.UnitTests;
 public sealed class AgentHarnessTests
 {
     [Fact]
-    public async Task AskAsyncExposesBatonFriendlyResult()
+    public async Task AskAsyncExposesHostFriendlyResult()
     {
         var harness = CreateHarness(out var tempDir);
         try

@@ -8,7 +8,7 @@
     <PackageId>HarnessCli.Core</PackageId>
     <Version>0.1.2</Version>
     <Authors>mattgenious</Authors>
-    <Description>Reusable contracts, session registry infrastructure, state normalization, and prompt rendering for harness-cli agent backends.</Description>
+    <Description>Reusable contracts, session registry infrastructure, state normalization, prompt rendering, and cell records for Aegis agent backends.</Description>
     <RepositoryUrl>https://github.com/mattgenious/harness-cli</RepositoryUrl>
     <PackageTags>agents;cli;harness;automation</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

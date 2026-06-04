@@ -25,16 +25,24 @@ internal static class BackendStatePaths
             return Path.GetFullPath(stateRoot);
         }
 
-        var explicitPath = Environment.GetEnvironmentVariable("HARNESS_CLI_BACKEND_STATE_DIR");
+        var explicitPath = Environment.GetEnvironmentVariable("AEGIS_BACKEND_STATE_DIR")
+                           ?? Environment.GetEnvironmentVariable("HARNESS_CLI_BACKEND_STATE_DIR");
         if (!string.IsNullOrWhiteSpace(explicitPath))
         {
             return Path.GetFullPath(explicitPath);
         }
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        return !string.IsNullOrWhiteSpace(appData)
-            ? Path.Combine(appData, "harness-cli", "backend-state")
-            : Path.Combine(Path.GetTempPath(), "harness-cli", "backend-state");
+        if (!string.IsNullOrWhiteSpace(appData))
+        {
+            var aegisPath = Path.Combine(appData, "aegis", "backend-state");
+            var legacyPath = Path.Combine(appData, "harness-cli", "backend-state");
+            return !Directory.Exists(aegisPath) && Directory.Exists(legacyPath) ? legacyPath : aegisPath;
+        }
+
+        var tempAegisPath = Path.Combine(Path.GetTempPath(), "aegis", "backend-state");
+        var tempLegacyPath = Path.Combine(Path.GetTempPath(), "harness-cli", "backend-state");
+        return !Directory.Exists(tempAegisPath) && Directory.Exists(tempLegacyPath) ? tempLegacyPath : tempAegisPath;
     }
 
     private static string ResolveWorkspaceKey(string? workspaceDirectory)

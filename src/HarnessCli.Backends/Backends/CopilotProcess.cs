@@ -25,8 +25,8 @@ internal static class CopilotProcess
             startInfo.ArgumentList.Add("-ExecutionPolicy");
             startInfo.ArgumentList.Add("Bypass");
             startInfo.ArgumentList.Add("-Command");
-            startInfo.ArgumentList.Add("& $env:HARNESS_CLI_COPILOT_COMMAND_SCRIPT @args");
-            startInfo.Environment["HARNESS_CLI_COPILOT_COMMAND_SCRIPT"] = copilotBinary;
+            startInfo.ArgumentList.Add("& $env:AEGIS_COPILOT_COMMAND_SCRIPT @args");
+            startInfo.Environment["AEGIS_COPILOT_COMMAND_SCRIPT"] = copilotBinary;
             AddArguments(startInfo, args);
             return startInfo;
         }
