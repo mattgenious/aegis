@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Aegis</RootNamespace>
+    <PackageId>Aegis.Backends</PackageId>
+    <Version>0.1.2</Version>
+    <Authors>mattgenious</Authors>
+    <Description>Reusable OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters plus orchestration services for Aegis.</Description>
+    <RepositoryUrl>https://github.com/mattgenious/aegis</RepositoryUrl>
+    <PackageTags>agents;opencode;codex;pi;copilot;automation</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Aegis.Core\Aegis.Core.csproj" />
+    <Content Include="..\..\prompts\**\*.md" Link="prompts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Pack="true" PackagePath="contentFiles\any\any\prompts\%(RecursiveDir)%(Filename)%(Extension)" PackageCopyToOutput="true" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

@@ -1,24 +1,24 @@
-# Harness CLI Development Conventions
+# Aegis Development Conventions
 
 ## Codebase structure
 
-- `src/HarnessCli.Core/` contains reusable contracts, session registry infrastructure, state normalization, and prompt rendering.
-- `src/HarnessCli.Backends/` contains reusable backend adapters and transport helpers.
-- `src/HarnessCli/` is the CLI application code.
-- `tests/HarnessCli.UnitTests/` is for pure unit tests.
-- `tests/HarnessCli.IntegrationTests/` is for CLI/process-level tests.
+- `src/Aegis.Core/` contains reusable contracts, session registry infrastructure, state normalization, and prompt rendering.
+- `src/Aegis.Backends/` contains reusable backend adapters and transport helpers.
+- `src/Aegis/` is the CLI application code.
+- `tests/Aegis.UnitTests/` is for pure unit tests.
+- `tests/Aegis.IntegrationTests/` is for CLI/process-level tests.
 - `docs/` contains product and architecture docs.
 - `prompts/` contains built-in agent prompt templates as markdown, grouped by theme/backend.
 
-The app binary is `harness-cli`. Keep `opencode-harness-cli` only as an explicit migration alias until compatibility support is intentionally removed.
+The app binary is `aegis`. Keep `opencode-aegis` only as an explicit migration alias until compatibility support is intentionally removed.
 
 ## Source organization
 
-- Keep root bootstrap in `src/HarnessCli/Program.cs` minimal.
-- Command handlers should live in `src/HarnessCli/Commands/`.
-- Backend abstraction implementations in `src/HarnessCli.Backends/Backends/`.
-- Shared domain/session types in `src/HarnessCli.Core/Core/`.
-- Shared infrastructure helpers in `src/HarnessCli.Core/Infrastructure/`.
+- Keep root bootstrap in `src/Aegis/Program.cs` minimal.
+- Command handlers should live in `src/Aegis/Commands/`.
+- Backend abstraction implementations in `src/Aegis.Backends/Backends/`.
+- Shared domain/session types in `src/Aegis.Core/Core/`.
+- Shared infrastructure helpers in `src/Aegis.Core/Infrastructure/`.
 - Built-in prompt bodies must live under `prompts/**/*.md`; C# may render templates but must not hide system/delegation prompt text in string literals.
 
 ## File and member limits
@@ -61,7 +61,7 @@ The app binary is `harness-cli`. Keep `opencode-harness-cli` only as an explicit
 
 ## Adding a backend adapter
 
-- Add the backend contract via `ISessionBackend` in `src/HarnessCli/Backends/`.
+- Add the backend contract via `ISessionBackend` in `src/Aegis/Backends/`.
 - Keep mapping responsibilities in one place (`SessionStateNormalizer`, `SessionRegistryService`, etc.) and keep command adapters thin.
 - Persist status and message state in deterministic JSON files per session so resume/troubleshooting tools can operate independently of the transport.
 - Add adapter-level unit tests for:
