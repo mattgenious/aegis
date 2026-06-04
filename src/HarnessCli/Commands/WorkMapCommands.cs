@@ -16,7 +16,7 @@ internal static partial class Program
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         {
             PrintWorkMapHelp();
-            WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a mission, then launch linked worker sessions from the map."));
+            WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a cell, then launch linked worker sessions from it."));
             return 0;
         }
 
@@ -24,7 +24,7 @@ internal static partial class Program
         if (options.Help)
         {
             PrintWorkMapHelp();
-            WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a mission, then launch linked worker sessions from the map."));
+            WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a cell, then launch linked worker sessions from it."));
             return 0;
         }
 
@@ -33,13 +33,14 @@ internal static partial class Program
         {
             var host = string.IsNullOrWhiteSpace(options.Host) ? WorkMapDefaultHost : options.Host;
             var port = options.Port ?? WorkMapDefaultPort;
-            WriteWorkMapNextAction(NextCommandHintContext.General($"Open http://{host}:{port}/ or keep the observer running while agents update the map."));
+            WriteWorkMapNextAction(NextCommandHintContext.General($"Open http://{host}:{port}/ or keep the observer running while agents update cells."));
             return await WorkMapServe(store, options);
         }
 
         return options.Positionals switch
         {
             ["create", ..] => await WorkMapCreate(store, options),
+            ["fork", ..] => await WorkMapFork(store, options),
             ["list", ..] => await WorkMapList(store, options),
             ["show", ..] => await WorkMapShow(store, options),
             ["brief", ..] => await WorkMapBrief(store, options),
@@ -49,6 +50,7 @@ internal static partial class Program
             ["store", "info", ..] => await WorkMapStoreInfo(store),
             ["store", "export", ..] => await WorkMapStoreExport(store, options),
             ["store", "import", ..] => await WorkMapStoreImport(store, options),
+            ["update", ..] => await WorkMapMissionUpdate(store, options),
             ["mission", "update", ..] => await WorkMapMissionUpdate(store, options),
             ["stream", "add", ..] => await WorkMapStreamAdd(store, options),
             ["stream", "update", ..] => await WorkMapStreamUpdate(store, options),
@@ -65,7 +67,7 @@ internal static partial class Program
             ["evidence", "add", ..] => await WorkMapEvidenceAdd(store, options),
             ["evidence", "remove", ..] => await WorkMapEvidenceRemove(store, options),
             ["verification", "add", ..] => await WorkMapVerificationAdd(store, options),
-            _ => Fail($"Unknown work-map command '{string.Join(' ', options.Positionals)}'. Run `harness-cli help work-map`.")
+            _ => Fail($"Unknown cell command '{string.Join(' ', options.Positionals)}'. Run `aegis help cell`.")
         };
     }
 
@@ -74,10 +76,11 @@ internal static partial class Program
         var now = DateTimeOffset.UtcNow;
         var mission = new WorkMapMissionRecord
         {
-            Id = options.MissionId ?? NewWorkMapId("mission"),
+            Id = options.MissionId ?? NewWorkMapId("cell"),
             Title = Require(options.Title, "--title"),
             Intent = options.Intent,
             Status = options.Status ?? "planned",
+            ParentCellId = options.ParentCellId,
             CreatedAtUtc = now,
             UpdatedAtUtc = now,
             NextAction = options.NextAction,
@@ -87,15 +90,53 @@ internal static partial class Program
                 {
                     AtUtc = now,
                     Type = "created",
-                    Summary = "Mission created."
+                    Summary = "Cell created."
                 }
             ]
         };
 
         await store.SaveMissionAsync(mission);
+        if (!string.IsNullOrWhiteSpace(options.ParentCellId))
+        {
+            await LinkChildCell(store, options.ParentCellId, mission.Id, now);
+        }
+
         WriteWorkMapJson(
             JsonSerializer.SerializeToNode(mission, JsonOptions),
-            NextCommandHintContext.ForMission(mission.Id, "Add workstreams, then launch linked worker sessions from this mission."));
+            NextCommandHintContext.ForMission(mission.Id, "Add streams, fork child cells, or launch linked worker sessions from this cell."));
+        return 0;
+    }
+
+    private static async Task<int> WorkMapFork(IWorkMapStore store, WorkMapArgs options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var parent = await RequireMission(store, options.MissionId);
+        var child = new WorkMapMissionRecord
+        {
+            Id = NewWorkMapId("cell"),
+            Title = Require(options.Title, "--title"),
+            Intent = options.Intent,
+            Status = options.Status ?? "planned",
+            ParentCellId = parent.Id,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now,
+            NextAction = options.NextAction,
+            Events =
+            [
+                new WorkMapEventRecord
+                {
+                    AtUtc = now,
+                    Type = "forked",
+                    Summary = $"Forked from parent cell {parent.Id}."
+                }
+            ]
+        };
+
+        await store.SaveMissionAsync(child);
+        await LinkChildCell(store, parent.Id, child.Id, now);
+        WriteWorkMapJson(
+            JsonSerializer.SerializeToNode(child, JsonOptions),
+            NextCommandHintContext.ForMission(child.Id, "Add streams or launch linked worker sessions from this child cell."));
         return 0;
     }
 
@@ -106,36 +147,36 @@ internal static partial class Program
         if (IsMarkdown(options.Format))
         {
             var builder = new StringBuilder();
-            builder.AppendLine("# Work Maps");
+            builder.AppendLine("# Cells");
             builder.AppendLine();
             foreach (var mission in ordered)
             {
                 builder.AppendLine($"- `{mission.Id}` - {mission.Title} ({mission.Status})");
             }
 
-            await WriteWorkMapOutput(WithInlineHints(builder.ToString(), NextCommandHintContext.General("Pick a mission to inspect or create a new one."), options), options);
-            WriteWorkMapNextAction(NextCommandHintContext.General("Pick a mission to inspect or create a new one."));
+            await WriteWorkMapOutput(WithInlineHints(builder.ToString(), NextCommandHintContext.General("Pick a cell to inspect or create a new one."), options), options);
+            WriteWorkMapNextAction(NextCommandHintContext.General("Pick a cell to inspect or create a new one."));
             return 0;
         }
 
         WriteWorkMapJson(
             JsonSerializer.SerializeToNode(ordered, JsonOptions),
-            NextCommandHintContext.General("Pick a mission to inspect or create a new one."));
+            NextCommandHintContext.General("Pick a cell to inspect or create a new one."));
         return 0;
     }
 
     private static async Task<int> WorkMapMissionUpdate(IWorkMapStore store, WorkMapArgs options)
     {
         var now = DateTimeOffset.UtcNow;
-        var missionId = Require(options.MissionId, "--mission");
+        var missionId = Require(options.MissionId, "--cell");
         var updated = await store.UpdateMissionAsync(missionId, mission =>
         {
             var events = mission.Events.ToList();
             events.Add(new WorkMapEventRecord
             {
                 AtUtc = now,
-                Type = "missionUpdated",
-                Summary = "Mission metadata updated."
+                Type = "cellUpdated",
+                Summary = "Cell metadata updated."
             });
 
             return mission with
@@ -151,7 +192,7 @@ internal static partial class Program
 
         WriteWorkMapJson(
             JsonSerializer.SerializeToNode(updated, JsonOptions),
-            NextCommandHintContext.ForMission(updated.Id, "Inspect the mission and launch or supervise the next linked worker."));
+            NextCommandHintContext.ForMission(updated.Id, "Inspect the cell and launch or supervise the next linked worker."));
         return 0;
     }
 
@@ -310,10 +351,11 @@ internal static partial class Program
 
         WriteWorkMapJson(new JsonObject
         {
+            ["cellID"] = updatedMission.Id,
             ["missionID"] = updatedMission.Id,
             ["streamID"] = stream.Id,
             ["deleted"] = true
-        }, NextCommandHintContext.ForMission(updatedMission.Id, "Inspect the mission and decide which remaining stream needs ownership."));
+        }, NextCommandHintContext.ForMission(updatedMission.Id, "Inspect the cell and decide which remaining stream needs ownership."));
         return 0;
     }
 
@@ -352,7 +394,7 @@ internal static partial class Program
                 {
                     AtUtc = now,
                     Type = "linked",
-                    Summary = "Existing session linked to work map."
+                    Summary = "Existing session linked to cell."
                 }
             ]
         };
@@ -360,7 +402,7 @@ internal static partial class Program
         await SaveSessionAttachment(store, mission, workstream, session, now, "Session linked.");
         WriteWorkMapJson(
             JsonSerializer.SerializeToNode(session, JsonOptions),
-            NextCommandHintContext.ForSession(session, "Sync or supervise the linked session so the map reflects current worker state."));
+            NextCommandHintContext.ForSession(session, "Sync or supervise the linked session so the cell reflects current worker state."));
         return 0;
     }
 
@@ -393,6 +435,7 @@ internal static partial class Program
 
         WriteWorkMapJson(new JsonObject
         {
+            ["cellID"] = mission.Id,
             ["missionID"] = mission.Id,
             ["workstreamID"] = workstream.Id,
             ["sessionID"] = outcome.Session.Id,
@@ -409,7 +452,7 @@ internal static partial class Program
             ["status"] = outcome.Session.Status,
             ["summary"] = outcome.Session.FinalHandoff?.Text,
             ["nextCommands"] = JsonSerializer.SerializeToNode(BuildSessionRunNextCommands(mission.Id, outcome.Session), JsonOptions)
-        }, NextCommandHintContext.ForSession(outcome.Session, "Supervise the mission or inspect the worker handoff."));
+        }, NextCommandHintContext.ForSession(outcome.Session, "Supervise the cell or inspect the worker handoff."));
         return 0;
     }
 
@@ -1318,6 +1361,7 @@ internal static partial class Program
 
         WriteWorkMapJson(new JsonObject
         {
+            ["cellID"] = mission.Id,
             ["missionID"] = mission.Id,
             ["quiet"] = finalCounts.Quiet,
             ["active"] = finalCounts.Active,
@@ -1343,12 +1387,13 @@ internal static partial class Program
             ["provider"] = "json-directory",
             ["directory"] = directory,
             ["exists"] = exists,
+            ["cells"] = missions.Count,
             ["missions"] = missions.Count,
             ["workstreams"] = workstreams.Count,
             ["sessions"] = sessions.Count,
             ["jsonFiles"] = exists ? CountJsonFiles(directory!) : 0,
             ["bytes"] = exists ? SumFileBytes(directory!) : 0
-        }, NextCommandHintContext.General("List or show a mission from this store."));
+        }, NextCommandHintContext.General("List or show a cell from this store."));
         return 0;
     }
 
@@ -1363,7 +1408,7 @@ internal static partial class Program
         };
         var json = JsonSerializer.Serialize(snapshot, JsonOptions);
         await WriteWorkMapOutput(json + Environment.NewLine, options);
-        WriteWorkMapNextAction(NextCommandHintContext.General("Import this snapshot into another store, or inspect a mission from the exported records."));
+        WriteWorkMapNextAction(NextCommandHintContext.General("Import this snapshot into another store, or inspect a cell from the exported records."));
         return 0;
     }
 
@@ -1388,6 +1433,7 @@ internal static partial class Program
             {
                 ["imported"] = false,
                 ["dryRun"] = true,
+                ["cells"] = snapshot.Missions.Count,
                 ["missions"] = snapshot.Missions.Count,
                 ["workstreams"] = snapshot.Workstreams.Count,
                 ["sessions"] = snapshot.Sessions.Count,
@@ -1398,7 +1444,7 @@ internal static partial class Program
 
         foreach (var mission in snapshot.Missions)
         {
-            ValidateRecordId(mission.Id, "mission");
+            ValidateRecordId(mission.Id, "cell");
             await store.SaveMissionAsync(mission);
         }
 
@@ -1417,11 +1463,12 @@ internal static partial class Program
         WriteWorkMapJson(new JsonObject
         {
             ["imported"] = true,
+            ["cells"] = snapshot.Missions.Count,
             ["missions"] = snapshot.Missions.Count,
             ["workstreams"] = snapshot.Workstreams.Count,
             ["sessions"] = snapshot.Sessions.Count,
             ["overwroteExisting"] = conflicts.Count
-        }, NextCommandHintContext.General("List imported missions, then show the mission you want to continue."));
+        }, NextCommandHintContext.General("List imported cells, then show the cell you want to continue."));
         return 0;
     }
 
@@ -1586,6 +1633,7 @@ internal static partial class Program
     private static JsonObject ToLaunchJson(WorkMapLaunchResult result) =>
         new()
         {
+            ["cellID"] = result.MissionId,
             ["missionID"] = result.MissionId,
             ["backend"] = result.Backend,
             ["dryRun"] = result.DryRun,
@@ -1867,14 +1915,14 @@ internal static partial class Program
             Sessions = snapshot.Sessions ?? []
         };
 
-        if (snapshot.Kind != "workMapSnapshot")
+        if (snapshot.Kind is not ("cellStoreSnapshot" or "workMapSnapshot"))
         {
-            throw new ArgumentException("Snapshot kind must be 'workMapSnapshot'.");
+            throw new ArgumentException("Snapshot kind must be 'cellStoreSnapshot' or legacy 'workMapSnapshot'.");
         }
 
         foreach (var mission in snapshot.Missions)
         {
-            ValidateRecordId(mission.Id, "mission");
+            ValidateRecordId(mission.Id, "cell");
         }
 
         foreach (var workstream in snapshot.Workstreams)
@@ -1897,7 +1945,7 @@ internal static partial class Program
         {
             if (await store.GetMissionAsync(mission.Id) is not null)
             {
-                conflicts.Add(new JsonObject { ["kind"] = "mission", ["id"] = mission.Id });
+                conflicts.Add(new JsonObject { ["kind"] = "cell", ["legacyKind"] = "mission", ["id"] = mission.Id });
             }
         }
 
@@ -1928,32 +1976,72 @@ internal static partial class Program
         }
     }
 
+    private static async Task LinkChildCell(IWorkMapStore store, string parentCellId, string childCellId, DateTimeOffset now)
+    {
+        await store.UpdateMissionAsync(parentCellId, parent =>
+        {
+            var childCellIds = parent.ChildCellIds.ToList();
+            AddUnique(childCellIds, childCellId);
+
+            var events = parent.Events.ToList();
+            events.Add(new WorkMapEventRecord
+            {
+                AtUtc = now,
+                Type = "childCellLinked",
+                Summary = $"Child cell {childCellId} linked."
+            });
+
+            var edges = parent.Edges.ToList();
+            if (!edges.Any(edge =>
+                    string.Equals(edge.FromId, parentCellId, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(edge.ToId, childCellId, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(edge.Kind, "contains", StringComparison.OrdinalIgnoreCase)))
+            {
+                edges.Add(new WorkMapEdgeRecord
+                {
+                    FromId = parentCellId,
+                    ToId = childCellId,
+                    Kind = "contains",
+                    Summary = "Parent cell contains child cell."
+                });
+            }
+
+            return parent with
+            {
+                ChildCellIds = childCellIds,
+                Events = events,
+                Edges = edges,
+                UpdatedAtUtc = now
+            };
+        });
+    }
+
     private static async Task<WorkMapMissionRecord> RequireMission(IWorkMapStore store, string? missionId)
     {
-        var id = Require(missionId, "--mission");
+        var id = Require(missionId, "--cell");
         var mission = await store.GetMissionAsync(id);
-        return mission ?? throw new ArgumentException($"Unknown work-map mission '{id}'.");
+        return mission ?? throw new ArgumentException($"Unknown cell '{id}'.");
     }
 
     private static async Task<WorkMapWorkstreamRecord> RequireWorkstream(IWorkMapStore store, string? streamId)
     {
         var id = Require(streamId, "--stream");
         var workstream = await store.GetWorkstreamAsync(id);
-        return workstream ?? throw new ArgumentException($"Unknown work-map workstream '{id}'.");
+        return workstream ?? throw new ArgumentException($"Unknown cell stream '{id}'.");
     }
 
     private static async Task<WorkMapAgentSessionRecord> RequireAgentSession(IWorkMapStore store, string? sessionId)
     {
         var id = Require(sessionId, "--session");
         var session = await store.GetAgentSessionAsync(id);
-        return session ?? throw new ArgumentException($"Unknown work-map agent session '{id}'.");
+        return session ?? throw new ArgumentException($"Unknown cell agent session '{id}'.");
     }
 
     private static void EnsureMissionOwnsWorkstream(WorkMapMissionRecord mission, WorkMapWorkstreamRecord workstream)
     {
         if (!string.Equals(workstream.MissionId, mission.Id, StringComparison.OrdinalIgnoreCase))
         {
-            throw new ArgumentException($"Workstream '{workstream.Id}' belongs to mission '{workstream.MissionId}', not '{mission.Id}'.");
+            throw new ArgumentException($"Workstream '{workstream.Id}' belongs to cell '{workstream.MissionId}', not '{mission.Id}'.");
         }
     }
 
@@ -1961,7 +2049,7 @@ internal static partial class Program
     {
         if (!string.Equals(session.MissionId, mission.Id, StringComparison.OrdinalIgnoreCase))
         {
-            throw new ArgumentException($"Session '{session.Id}' belongs to mission '{session.MissionId}', not '{mission.Id}'.");
+            throw new ArgumentException($"Session '{session.Id}' belongs to cell '{session.MissionId}', not '{mission.Id}'.");
         }
     }
 
@@ -2060,8 +2148,10 @@ internal static partial class Program
         var builder = new StringBuilder();
         builder.AppendLine($"# {bundle.Mission.Title}");
         builder.AppendLine();
-        builder.AppendLine($"- Mission: `{bundle.Mission.Id}`");
+        builder.AppendLine($"- Cell: `{bundle.Mission.Id}`");
         builder.AppendLine($"- Status: {bundle.Mission.Status}");
+        if (!string.IsNullOrWhiteSpace(bundle.Mission.ParentCellId)) builder.AppendLine($"- Parent cell: `{bundle.Mission.ParentCellId}`");
+        if (bundle.Mission.ChildCellIds.Count > 0) builder.AppendLine($"- Child cells: {string.Join(", ", bundle.Mission.ChildCellIds.Select(id => $"`{id}`"))}");
         if (!string.IsNullOrWhiteSpace(bundle.Mission.Intent)) builder.AppendLine($"- Intent: {bundle.Mission.Intent}");
         if (!string.IsNullOrWhiteSpace(bundle.Mission.NextAction)) builder.AppendLine($"- Next action: {bundle.Mission.NextAction}");
         builder.AppendLine();
@@ -2088,7 +2178,7 @@ internal static partial class Program
         }
 
         builder.AppendLine();
-        builder.AppendLine("## Mission Evidence");
+        builder.AppendLine("## Cell Evidence");
         builder.AppendLine();
         foreach (var evidence in bundle.Mission.Evidence)
         {
@@ -2111,10 +2201,12 @@ internal static partial class Program
         var builder = new StringBuilder();
         builder.AppendLine("<!doctype html>");
         builder.AppendLine("<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-        builder.AppendLine($"<title>{Html(bundle.Mission.Title)} - Work Map</title>");
+        builder.AppendLine($"<title>{Html(bundle.Mission.Title)} - Aegis Cell</title>");
         builder.AppendLine("<style>body{font-family:system-ui,sans-serif;margin:32px;line-height:1.4;color:#17202a;background:#f7f8fb}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.card{background:white;border:1px solid #d8dee9;border-radius:8px;padding:16px}.meta{color:#596579;font-size:13px}.status{font-weight:700}.pill{display:inline-block;border:1px solid #cbd5e1;border-radius:999px;padding:2px 8px;margin:2px;font-size:12px;background:#f8fafc}.timeline{border-left:2px solid #d8dee9;padding-left:14px}.event{margin:0 0 10px}.excerpt{white-space:pre-wrap;max-height:11em;overflow:auto;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:8px;font-size:13px}</style></head><body>");
         builder.AppendLine($"<h1>{Html(bundle.Mission.Title)}</h1>");
-        builder.AppendLine($"<p class=\"meta\">Mission {Html(bundle.Mission.Id)} · {Html(bundle.Mission.Status)}</p>");
+        builder.AppendLine($"<p class=\"meta\">Cell {Html(bundle.Mission.Id)} · {Html(bundle.Mission.Status)}</p>");
+        if (!string.IsNullOrWhiteSpace(bundle.Mission.ParentCellId)) builder.AppendLine($"<p class=\"meta\">Parent cell {Html(bundle.Mission.ParentCellId)}</p>");
+        if (bundle.Mission.ChildCellIds.Count > 0) builder.AppendLine($"<p class=\"meta\">Child cells {Html(string.Join(", ", bundle.Mission.ChildCellIds))}</p>");
         if (!string.IsNullOrWhiteSpace(bundle.Mission.Intent)) builder.AppendLine($"<p>{Html(bundle.Mission.Intent)}</p>");
         if (!string.IsNullOrWhiteSpace(bundle.Mission.NextAction)) builder.AppendLine($"<p><strong>Next:</strong> {Html(bundle.Mission.NextAction)}</p>");
         builder.AppendLine("<h2>Agent Sessions</h2><div class=\"grid\">");
@@ -2157,7 +2249,7 @@ internal static partial class Program
             builder.AppendLine("</section>");
         }
 
-        builder.AppendLine("</div><h2>Mission Evidence</h2><div class=\"grid\">");
+        builder.AppendLine("</div><h2>Cell Evidence</h2><div class=\"grid\">");
         foreach (var evidence in bundle.Mission.Evidence)
         {
             builder.AppendLine("<section class=\"card\">");
@@ -2197,7 +2289,9 @@ internal static partial class Program
         builder.AppendLine();
         builder.AppendLine("## Coordinator Context");
         builder.AppendLine();
-        builder.AppendLine($"- Mission: `{mission.Id}` - {mission.Title}");
+        builder.AppendLine($"- Cell: `{mission.Id}` - {mission.Title}");
+        if (!string.IsNullOrWhiteSpace(mission.ParentCellId)) builder.AppendLine($"- Parent cell: `{mission.ParentCellId}`");
+        if (mission.ChildCellIds.Count > 0) builder.AppendLine($"- Child cells: {string.Join(", ", mission.ChildCellIds)}");
         if (!string.IsNullOrWhiteSpace(mission.Intent)) builder.AppendLine($"- Intent: {mission.Intent}");
         builder.AppendLine($"- Workstream: `{workstream.Id}` - {workstream.Name}");
         if (workstream.DependsOn.Count > 0) builder.AppendLine($"- Depends on: {string.Join(", ", workstream.DependsOn)}");
@@ -2420,15 +2514,16 @@ internal static partial class Program
 
     private static string[] BuildSessionRunNextCommands(string missionId, WorkMapAgentSessionRecord session) =>
     [
-        $"harness-cli work-map supervise --mission {missionId} --until-idle --max-runs 1",
-        $"harness-cli last-summary --backend {session.Backend} --session {session.Id} --plain"
+        $"aegis cell supervise --cell {missionId} --until-idle --max-runs 1",
+        $"aegis last-summary --backend {session.Backend} --session {session.Id} --plain"
     ];
 
     private static JsonObject BuildWorkMapNextActionJson(NextCommandHintContext context) =>
         new()
         {
-            ["kind"] = "work-map-next-action",
+            ["kind"] = "cell-next-action",
             ["suggestedNextAction"] = SuggestedNextAction(context),
+            ["cellID"] = string.IsNullOrWhiteSpace(context.MissionId) ? null : context.MissionId,
             ["missionID"] = string.IsNullOrWhiteSpace(context.MissionId) ? null : context.MissionId,
             ["streamID"] = string.IsNullOrWhiteSpace(context.StreamId) ? null : context.StreamId,
             ["sessionID"] = string.IsNullOrWhiteSpace(context.SessionId) ? null : context.SessionId,
@@ -2440,7 +2535,8 @@ internal static partial class Program
     private static readonly string[] WorkMapNextActionNotes =
     [
         "Use --backend copilot without a github-copilot provider model only for the standalone Copilot CLI backend.",
-        "Use --model github-copilot/gpt-5.5 with work-map session run or harness-cli ask for OpenCode sessions using the GitHub Copilot provider."
+        "Use --model github-copilot/gpt-5.5 with cell session run or aegis ask for OpenCode sessions using the GitHub Copilot provider.",
+        "The legacy `aegis work-map` and `harness-cli work-map` command forms remain accepted during migration; prefer `aegis cell` in new briefs and docs."
     ];
 
     private static readonly JsonSerializerOptions WorkMapNextActionJsonOptions = new(JsonSerializerDefaults.Web)
@@ -2462,20 +2558,20 @@ internal static partial class Program
 
         if (!string.IsNullOrWhiteSpace(context.StreamId))
         {
-            return "Launch a linked worker for this stream, or supervise the mission if a worker is already attached.";
+            return "Launch a linked worker for this stream, or supervise the cell if a worker is already attached.";
         }
 
         if (!string.IsNullOrWhiteSpace(context.MissionId))
         {
-            return "Inspect the mission, add a stream if needed, then launch linked workers.";
+            return "Inspect the cell, add a stream or child cell if needed, then launch linked workers.";
         }
 
-        return "List existing missions or create a mission before launching linked workers.";
+        return "List existing cells or create a cell before launching linked workers.";
     }
 
     private static string[] BuildNextCommands(NextCommandHintContext context)
     {
-        var mission = string.IsNullOrWhiteSpace(context.MissionId) ? "<mission>" : context.MissionId;
+        var mission = string.IsNullOrWhiteSpace(context.MissionId) ? "<cell>" : context.MissionId;
         var stream = string.IsNullOrWhiteSpace(context.StreamId) ? "<stream>" : context.StreamId;
         var directory = QuoteExampleValue(string.IsNullOrWhiteSpace(context.Directory) ? "<dir>" : context.Directory);
         var role = QuoteExampleValue(string.IsNullOrWhiteSpace(context.Role) ? "<role>" : context.Role);
@@ -2483,16 +2579,16 @@ internal static partial class Program
 
         if (!string.IsNullOrWhiteSpace(context.SessionId))
         {
-            commands.Add($"harness-cli work-map session sync --session {context.SessionId}");
-            commands.Add($"harness-cli work-map show --mission {mission} --format md");
+            commands.Add($"aegis cell session sync --session {context.SessionId}");
+            commands.Add($"aegis cell show --cell {mission} --format md");
             if (!string.IsNullOrWhiteSpace(context.Backend) && BackendKindExtensions.TryParse(context.Backend, out _))
             {
-                commands.Add($"harness-cli last-summary --backend {context.Backend} --session {context.SessionId} --plain");
+                commands.Add($"aegis last-summary --backend {context.Backend} --session {context.SessionId} --plain");
             }
             else
             {
-                commands.Add($"harness-cli work-map session handoff --session {context.SessionId} --summary \"<handoff>\"");
-                commands.Add($"harness-cli work-map session blocker set --session {context.SessionId} --summary \"<blocker>\"");
+                commands.Add($"aegis cell session handoff --session {context.SessionId} --summary \"<handoff>\"");
+                commands.Add($"aegis cell session blocker set --session {context.SessionId} --summary \"<blocker>\"");
             }
 
             return commands.ToArray();
@@ -2500,25 +2596,26 @@ internal static partial class Program
 
         if (!string.IsNullOrWhiteSpace(context.StreamId))
         {
-            commands.Add($"harness-cli work-map session run --mission {mission} --stream {stream} --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900 --async");
-            commands.Add($"harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900");
-            commands.Add($"harness-cli work-map session link --mission {mission} --stream {stream} --session <ses_...> --backend opencode --role {role}");
-            commands.Add($"harness-cli work-map supervise --mission {mission} --until-idle --max-runs 1");
+            commands.Add($"aegis cell session run --cell {mission} --stream {stream} --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900 --async");
+            commands.Add($"aegis ask --model github-copilot/gpt-5.5 --variant high --agent build --directory {directory} --prompt-file \"<brief.md>\" --timeout 900");
+            commands.Add($"aegis cell session link --cell {mission} --stream {stream} --session <ses_...> --backend opencode --role {role}");
+            commands.Add($"aegis cell supervise --cell {mission} --until-idle --max-runs 1");
             return commands.ToArray();
         }
 
         if (!string.IsNullOrWhiteSpace(context.MissionId))
         {
-            commands.Add($"harness-cli work-map show --mission {mission} --format md");
-            commands.Add($"harness-cli work-map stream add --mission {mission} --name \"<stream>\" --role \"<role>\" --clone \"<dir>\"");
-            commands.Add($"harness-cli work-map session run --mission {mission} --stream <stream> --model github-copilot/gpt-5.5 --variant high --agent build --directory \"<dir>\" --prompt-file \"<brief.md>\" --timeout 900 --async");
-            commands.Add("harness-cli ask --model github-copilot/gpt-5.5 --variant high --agent build --directory \"<dir>\" --prompt-file \"<brief.md>\" --timeout 900");
+            commands.Add($"aegis cell show --cell {mission} --format md");
+            commands.Add($"aegis cell stream add --cell {mission} --name \"<stream>\" --role \"<role>\" --clone \"<dir>\"");
+            commands.Add($"aegis cell fork --cell {mission} --title \"<child cell>\" --intent \"<goal>\"");
+            commands.Add($"aegis cell session run --cell {mission} --stream <stream> --model github-copilot/gpt-5.5 --variant high --agent build --directory \"<dir>\" --prompt-file \"<brief.md>\" --timeout 900 --async");
+            commands.Add("aegis ask --model github-copilot/gpt-5.5 --variant high --agent build --directory \"<dir>\" --prompt-file \"<brief.md>\" --timeout 900");
             return commands.ToArray();
         }
 
-        commands.Add("harness-cli work-map list --format md");
-        commands.Add("harness-cli work-map create --title \"<mission>\" --intent \"<goal>\"");
-        commands.Add("harness-cli work-map store info");
+        commands.Add("aegis cell list --format md");
+        commands.Add("aegis cell create --title \"<cell>\" --intent \"<goal>\"");
+        commands.Add("aegis cell store info");
         return commands.ToArray();
     }
 
@@ -2613,9 +2710,12 @@ internal static partial class Program
     }
 
     private sealed record WorkMapBundle(
-        WorkMapMissionRecord Mission,
+        WorkMapMissionRecord Cell,
         IReadOnlyList<WorkMapWorkstreamRecord> Workstreams,
-        IReadOnlyList<WorkMapAgentSessionRecord> Sessions);
+        IReadOnlyList<WorkMapAgentSessionRecord> Sessions)
+    {
+        public WorkMapMissionRecord Mission => Cell;
+    }
 
     private sealed record WorkMapSessionRunOutcome(
         WorkMapAgentSessionRecord Session,
@@ -2665,6 +2765,8 @@ internal static partial class Program
         public List<string> Positionals { get; } = [];
 
         public string? MissionId { get; private set; }
+
+        public string? ParentCellId { get; private set; }
 
         public string? StreamId { get; private set; }
 
@@ -2795,7 +2897,9 @@ internal static partial class Program
                 var arg = queue.Dequeue();
                 switch (arg)
                 {
+                    case "--cell": parsed.MissionId = Value(queue, arg); break;
                     case "--mission": parsed.MissionId = Value(queue, arg); break;
+                    case "--parent-cell": parsed.ParentCellId = Value(queue, arg); break;
                     case "--stream": parsed.StreamId = Value(queue, arg); break;
                     case "--session": parsed.SessionId = Value(queue, arg); break;
                     case "--title": parsed.Title = Value(queue, arg); break;
@@ -2877,7 +2981,7 @@ internal static partial class Program
                     default:
                         if (arg.StartsWith("--", StringComparison.Ordinal))
                         {
-                            throw new ArgumentException($"Unknown work-map option '{arg}'.");
+                            throw new ArgumentException($"Unknown cell option '{arg}'.");
                         }
 
                         parsed.Positionals.Add(arg);

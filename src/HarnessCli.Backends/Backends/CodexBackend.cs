@@ -350,7 +350,8 @@ public sealed class CodexBackend : ISessionBackend
             return codexBinary;
         }
 
-        var configured = Environment.GetEnvironmentVariable("HARNESS_CLI_CODEX_BINARY");
+        var configured = Environment.GetEnvironmentVariable("AEGIS_CODEX_BINARY")
+                         ?? Environment.GetEnvironmentVariable("HARNESS_CLI_CODEX_BINARY");
         return string.IsNullOrWhiteSpace(configured) ? CodexBinary : configured;
     }
 

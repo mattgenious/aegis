@@ -10,7 +10,8 @@ public sealed class DefaultSessionRegistryPathProvider : ISessionRegistryPathPro
 
     private static string ResolvePath()
     {
-        var explicitPath = Environment.GetEnvironmentVariable("HARNESS_CLI_SESSION_DIR");
+        var explicitPath = Environment.GetEnvironmentVariable("AEGIS_SESSION_DIR")
+                           ?? Environment.GetEnvironmentVariable("HARNESS_CLI_SESSION_DIR");
         if (!string.IsNullOrWhiteSpace(explicitPath))
         {
             return explicitPath;
@@ -19,10 +20,14 @@ public sealed class DefaultSessionRegistryPathProvider : ISessionRegistryPathPro
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         if (!string.IsNullOrWhiteSpace(appData))
         {
-            return Path.Combine(appData, "harness-cli", "sessions");
+            var aegisPath = Path.Combine(appData, "aegis", "sessions");
+            var legacyPath = Path.Combine(appData, "harness-cli", "sessions");
+            return !Directory.Exists(aegisPath) && Directory.Exists(legacyPath) ? legacyPath : aegisPath;
         }
 
-        return Path.Combine(Path.GetTempPath(), "harness-cli", "sessions");
+        var tempAegisPath = Path.Combine(Path.GetTempPath(), "aegis", "sessions");
+        var tempLegacyPath = Path.Combine(Path.GetTempPath(), "harness-cli", "sessions");
+        return !Directory.Exists(tempAegisPath) && Directory.Exists(tempLegacyPath) ? tempLegacyPath : tempAegisPath;
     }
 }
 

@@ -57,7 +57,7 @@ function App() {
         <LoadingState />
       ) : (
         <main>
-          {route.kind === 'mission' ? (
+          {route.kind === 'cell' ? (
             <MissionDetail bundle={dataState.data} navigate={navigate} />
           ) : route.kind === 'session' ? (
             <SessionDetail detail={dataState.data} navigate={navigate} />
@@ -114,8 +114,8 @@ function TopBar({ route, autoRefresh, onToggleAutoRefresh, onRefresh, isRefreshi
           <Home size={18} />
         </button>
         <div>
-          <p className="eyebrow">Harness CLI</p>
-          <h1>{route.kind === 'overview' ? 'Work Map Observer' : route.kind === 'mission' ? 'Mission Detail' : 'Session Detail'}</h1>
+          <p className="eyebrow">Aegis</p>
+          <h1>{route.kind === 'overview' ? 'Cell Observer' : route.kind === 'cell' ? 'Cell Detail' : 'Session Detail'}</h1>
         </div>
       </div>
       <div className="top-actions">
@@ -134,14 +134,14 @@ function TopBar({ route, autoRefresh, onToggleAutoRefresh, onRefresh, isRefreshi
 }
 
 function Overview({ snapshot, navigate }) {
-  const bundles = snapshot?.missions ?? [];
+  const bundles = snapshot?.cells ?? snapshot?.missions ?? [];
   const sessions = useMemo(
     () =>
       bundles
         .flatMap((bundle) =>
           (bundle.sessions ?? []).map((session) => ({
             session,
-            mission: bundle.mission,
+            mission: bundle.cell ?? bundle.mission,
             workstream: (bundle.workstreams ?? []).find((item) => item.id === session.workstreamId)
           }))
         )
@@ -155,22 +155,22 @@ function Overview({ snapshot, navigate }) {
   return (
     <div className="page-stack">
       <section className="summary-grid">
-        <StatCard label="Missions" value={bundles.length} icon={GitBranch} />
+        <StatCard label="Cells" value={bundles.length} icon={GitBranch} />
         <StatCard label="Sessions" value={visibleSessions.length} icon={UsersRound} />
         <StatCard label="Active" value={activeSessions} icon={Activity} />
         <StatCard label="Store" value={shortPath(snapshot?.dataDirectory)} icon={SquareTerminal} compact />
       </section>
 
       <Section
-        title="Missions"
+        title="Cells"
         aside={bundles.length > 0 ? `${bundles.length} records` : undefined}
       >
         {bundles.length === 0 ? (
-          <EmptyState title="No missions recorded" body="Create a work-map mission and this observer will show it here." />
+          <EmptyState title="No cells recorded" body="Create an Aegis cell and this observer will show it here." />
         ) : (
           <div className="card-grid">
             {bundles.map((bundle) => (
-              <MissionCard key={bundle.mission.id} bundle={bundle} navigate={navigate} />
+              <MissionCard key={(bundle.cell ?? bundle.mission).id} bundle={bundle} navigate={navigate} />
             ))}
           </div>
         )}
@@ -178,7 +178,7 @@ function Overview({ snapshot, navigate }) {
 
       <Section title="Recent Sessions" aside={visibleSessions.length > 0 ? `${visibleSessions.length} linked${archivedSessions > 0 ? `, ${archivedSessions} archived` : ''}` : undefined}>
         {visibleSessions.length === 0 ? (
-          <EmptyState title="No sessions linked" body="Linked or run sessions will appear after work-map records are written." />
+          <EmptyState title="No sessions linked" body="Linked or run sessions will appear after cell records are written." />
         ) : (
           <div className="card-grid">
             {visibleSessions.slice(0, 12).map(({ session, mission, workstream }) => (
@@ -199,7 +199,7 @@ function Overview({ snapshot, navigate }) {
 
 function MissionDetail({ bundle, navigate }) {
   const [tab, setTab] = useState('sessions');
-  const mission = bundle?.mission;
+  const mission = bundle?.cell ?? bundle?.mission;
   const workstreams = bundle?.workstreams ?? [];
   const sessions = bundle?.sessions ?? [];
   const visibleSessions = sessions.filter((session) => !isArchived(session.status));
@@ -214,7 +214,7 @@ function MissionDetail({ bundle, navigate }) {
   const timeline = [...(mission?.events ?? []), ...sessionTimeline].sort((left, right) => dateValue(right.atUtc) - dateValue(left.atUtc));
 
   if (!mission) {
-    return <EmptyState title="Mission not found" body="The mission record could not be read." />;
+    return <EmptyState title="Cell not found" body="The cell record could not be read." />;
   }
 
   return (
@@ -268,7 +268,7 @@ function MissionDetail({ bundle, navigate }) {
               />
             ))}
           </div>
-          {visibleSessions.length === 0 ? <EmptyState title="No sessions" body="No active session records are linked to this mission." /> : null}
+          {visibleSessions.length === 0 ? <EmptyState title="No sessions" body="No active session records are linked to this cell." /> : null}
           {archivedSessions.length > 0 ? (
             <Section title="Archived Sessions" aside={`${archivedSessions.length} archived`}>
               <div className="card-grid">
@@ -295,12 +295,12 @@ function MissionDetail({ bundle, navigate }) {
               <WorkstreamCard key={stream.id} stream={stream} />
             ))}
           </div>
-          {workstreams.length === 0 ? <EmptyState title="No workstreams" body="No workstream records are linked to this mission." /> : null}
+          {workstreams.length === 0 ? <EmptyState title="No workstreams" body="No workstream records are linked to this cell." /> : null}
         </Section>
       ) : null}
 
       {tab === 'evidence' ? (
-        <EvidencePanel evidence={mission.evidence ?? []} title="Mission Evidence" />
+        <EvidencePanel evidence={mission.evidence ?? []} title="Cell Evidence" />
       ) : null}
 
       {tab === 'timeline' ? (
@@ -313,7 +313,7 @@ function MissionDetail({ bundle, navigate }) {
 function SessionDetail({ detail, navigate }) {
   const [tab, setTab] = useState('context');
   const session = detail?.session;
-  const mission = detail?.mission;
+  const mission = detail?.cell ?? detail?.mission;
   const workstream = detail?.workstream;
 
   if (!session) {
@@ -333,7 +333,7 @@ function SessionDetail({ detail, navigate }) {
 
   return (
     <div className="page-stack">
-      <BackButton onClick={() => navigate(mission ? `/missions/${encodeURIComponent(mission.id)}` : '/')} label={mission ? 'Mission' : 'Overview'} />
+      <BackButton onClick={() => navigate(mission ? `/cells/${encodeURIComponent(mission.id)}` : '/')} label={mission ? 'Cell' : 'Overview'} />
       <Card className="hero-card">
         <div className="hero-row">
           <div>
@@ -402,11 +402,12 @@ function SessionDetail({ detail, navigate }) {
 }
 
 function MissionCard({ bundle, navigate }) {
-  const { mission, workstreams = [], sessions = [] } = bundle;
+  const mission = bundle.cell ?? bundle.mission;
+  const { workstreams = [], sessions = [] } = bundle;
   const visibleSessions = sessions.filter((session) => !isArchived(session.status));
   const latestSession = [...visibleSessions].sort((left, right) => dateValue(right.updatedAtUtc) - dateValue(left.updatedAtUtc))[0];
   return (
-    <Card asButton onClick={() => navigate(`/missions/${encodeURIComponent(mission.id)}`)}>
+    <Card asButton onClick={() => navigate(`/cells/${encodeURIComponent(mission.id)}`)}>
       <div className="card-heading">
         <div>
           <h3>{mission.title}</h3>
@@ -447,7 +448,7 @@ function SessionCard({ session, mission, workstream, navigate, detailed = false 
         {session.role ? <Badge>{session.role}</Badge> : null}
         {session.model ? <Badge>{session.model}</Badge> : null}
       </div>
-      {mission ? <p className="muted">Mission: {mission.title}</p> : null}
+      {mission ? <p className="muted">Cell: {mission.title}</p> : null}
       {workstream ? <p className="muted">Stream: {workstream.name}</p> : null}
       {session.blocker ? (
         <InlineAlert tone="danger" icon={AlertTriangle}>{session.blocker.summary}</InlineAlert>
@@ -507,11 +508,11 @@ function SessionContext({ session, mission, workstream, navigate }) {
       <Card>
         <h3>Map Context</h3>
         {mission ? (
-          <button className="plain-link" type="button" onClick={() => navigate(`/missions/${encodeURIComponent(mission.id)}`)}>
+          <button className="plain-link" type="button" onClick={() => navigate(`/cells/${encodeURIComponent(mission.id)}`)}>
             {mission.title}
           </button>
         ) : (
-          <p className="muted">No mission record found.</p>
+          <p className="muted">No cell record found.</p>
         )}
         {workstream ? (
           <dl className="detail-list spaced">
@@ -759,7 +760,7 @@ function LoadingState() {
     <main>
       <div className="loading-row">
         <RefreshCw size={20} className="spin" />
-        <span>Loading work-map records</span>
+        <span>Loading cell records</span>
       </div>
     </main>
   );
@@ -767,15 +768,16 @@ function LoadingState() {
 
 function readRoute() {
   const parts = window.location.pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part));
-  if (parts[0] === 'missions' && parts[1]) return { kind: 'mission', id: parts[1] };
+  if (parts[0] === 'cells' && parts[1]) return { kind: 'cell', id: parts[1] };
+  if (parts[0] === 'missions' && parts[1]) return { kind: 'cell', id: parts[1] };
   if (parts[0] === 'sessions' && parts[1]) return { kind: 'session', id: parts[1] };
   return { kind: 'overview' };
 }
 
 function routeToApi(route) {
-  if (route.kind === 'mission') return `/api/missions/${encodeURIComponent(route.id)}`;
+  if (route.kind === 'cell') return `/api/cells/${encodeURIComponent(route.id)}`;
   if (route.kind === 'session') return `/api/sessions/${encodeURIComponent(route.id)}`;
-  return '/api/missions';
+  return '/api/cells';
 }
 
 async function fetchJson(path) {
