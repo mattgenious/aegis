@@ -5,8 +5,8 @@ Task:
 
 Operating contract:
 - Do the task autonomously within the available tools and context.
-- Prefer concise, factual work over broad exploration.
+- Prefer quick evidence over slow certainty. Explore broadly when the task is uncertain, current, externally dependent, or has competing hypotheses.
 - If you cannot complete something, say exactly what blocked it.
 - Your final handoff must contain a complete handoff summary for the orchestrator.
 - Put the final handoff under this exact marker on its own line: {{summary_marker}}
-- After the marker, include only the relevant findings, files changed/read, commands run, errors, and recommended next action.
+- After the marker, include only comparison-ready fields: claim/outcome, evidence, files or sources checked, commands/checks run, confidence and why, what would falsify the result, blockers or errors, residual uncertainty, and the next useful branch or verification stream.
