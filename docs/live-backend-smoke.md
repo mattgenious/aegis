@@ -19,7 +19,7 @@ The smoke run used an isolated registry:
 export AEGIS_SESSION_DIR=/tmp/aegis-live-smoke/sessions
 ```
 
-Use `aegis` or `aegis.dll` for live smoke commands. The legacy `harness-cli` and `opencode-harness-cli` names are command-shim compatibility aliases; direct `dotnet .../opencode-harness-cli.dll` invocation is not part of the migration contract.
+Use `aegis` or `aegis.dll` for live smoke commands. `opencode-aegis` is a shim alias for migration compatibility; direct `dotnet .../opencode-aegis.dll` invocation is not part of the migration contract.
 
 OpenCode 1.15.10:
 
@@ -29,7 +29,7 @@ OpenCode 1.15.10:
 PATH="/tmp/aegis-live-smoke/bin:$PATH" \
   opencode serve --hostname 0.0.0.0 --port 4096 --print-logs --log-level DEBUG
 
-dotnet src/HarnessCli/bin/Debug/net10.0/aegis.dll ask \
+dotnet src/Aegis/bin/Debug/net10.0/aegis.dll ask \
   --server http://127.0.0.1:4096 \
   --directory /tmp/aegis-live-smoke/repo \
   --timeout 240 \
@@ -44,7 +44,7 @@ Result: `summary = "opencode backend smoke passed"`.
 Codex:
 
 ```bash
-dotnet src/HarnessCli/bin/Debug/net10.0/aegis.dll ask \
+dotnet src/Aegis/bin/Debug/net10.0/aegis.dll ask \
   --backend codex \
   --directory /tmp/aegis-live-smoke/repo \
   --timeout 180 \
@@ -57,7 +57,7 @@ Result: `summary = "codex backend smoke passed"`.
 Pi:
 
 ```bash
-dotnet src/HarnessCli/bin/Debug/net10.0/aegis.dll ask \
+dotnet src/Aegis/bin/Debug/net10.0/aegis.dll ask \
   --backend pi \
   --directory /tmp/aegis-live-smoke/repo \
   --timeout 240 \
@@ -70,7 +70,7 @@ Result: `summary = "pi backend smoke passed"`.
 GitHub Copilot CLI:
 
 ```bash
-dotnet src/HarnessCli/bin/Debug/net10.0/aegis.dll ask \
+dotnet src/Aegis/bin/Debug/net10.0/aegis.dll ask \
   --backend copilot \
   --directory /tmp/aegis-live-smoke/repo \
   --timeout 240 \
@@ -89,8 +89,8 @@ Result: `summary = "copilot backend smoke passed"` through `aegis cell session r
 
 2026-05-23:
 
-- Published `HarnessCli.Core 0.1.0` and `HarnessCli.Backends 0.1.0` to GitHub Packages and validated a package-backed launcher path can restore/use the libraries.
-- Published `HarnessCli.Core 0.1.1` and `HarnessCli.Backends 0.1.1` after moving Codex/Pi backend state outside target repositories.
+- Published `Aegis.Core 0.1.0` and `Aegis.Backends 0.1.0` to GitHub Packages and validated a package-backed launcher path can restore/use the libraries.
+- Published `Aegis.Core 0.1.1` and `Aegis.Backends 0.1.1` after moving Codex/Pi backend state outside target repositories.
 - Reverified live `ask` flows against OpenCode 1.15.10, Codex CLI 0.133.0-alpha.1, and Pi 0.75.4.
 - The WSL `opencode` command resolved to a Windows npm shim that could not run the Linux binary. The smoke used the current `opencode-linux-x64@1.15.10` package binary directly.
 - `ensure-server --print-logs` reached a healthy OpenCode 1.15.10 server but stayed attached to log streaming in this shell. The live OpenCode smoke used a directly started server while preserving the same HTTP `ask` path.

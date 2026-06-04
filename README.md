@@ -1,29 +1,29 @@
 # Aegis
 
-> This repository is still named `harness-cli` during the migration. The command and product identity are now Aegis; the repo rename is a later step.
+> This repository is still named `aegis` during the migration. The command and product identity are now Aegis; the repo rename is a later step.
 
 Aegis is a small .NET helper for deterministic delegated agent sessions and durable coordination state across supported backends. It gives agents a stable way to launch delegated sessions, enforce a final handoff summary contract, fetch summaries without loading full transcripts, and keep lightweight recursive cell records for multi-agent coordination.
 
 ## Layout
 
-- `src/HarnessCli.Core/`: shared contracts, session registry infrastructure, state normalization, prompt rendering, and cell records.
-- `src/HarnessCli.Backends/`: OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters.
-- `src/HarnessCli/`: Aegis CLI application source.
-- `src/HarnessCli/WorkMapUi/`: optional Aegis cell observer UI.
-- `tests/HarnessCli.UnitTests/`: unit tests.
-- `tests/HarnessCli.IntegrationTests/`: integration tests.
+- `src/Aegis.Core/`: shared contracts, session registry infrastructure, state normalization, prompt rendering, and cell records.
+- `src/Aegis.Backends/`: OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters.
+- `src/Aegis/`: Aegis CLI application source.
+- `src/Aegis/CellUi/`: optional Aegis cell observer UI.
+- `tests/Aegis.UnitTests/`: unit tests.
+- `tests/Aegis.IntegrationTests/`: integration tests.
 - `prompts/`: markdown source files for built-in agent prompts.
 
 Conventions and coding standards are documented in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Build
 
-The solution and package IDs intentionally remain `harness-cli` / `HarnessCli.*` until the repo rename is planned separately.
+The solution and package IDs are now `aegis` / `Aegis.*`.
 
 ```powershell
-dotnet build harness-cli.sln
-dotnet test harness-cli.sln
-dotnet publish src/HarnessCli/HarnessCli.csproj -c Release -o "$HOME\.local\bin" --self-contained false
+dotnet build aegis.sln
+dotnet test aegis.sln
+dotnet publish src/Aegis/Aegis.csproj -c Release -o "$HOME\.local\bin" --self-contained false
 aegis self-test
 ```
 
@@ -37,11 +37,11 @@ Library/package consumption notes for in-process callers are in [docs/package-co
 
 The workspace installer publishes versioned `aegis.exe` builds under `$HOME\.local\aegis\versions` and installs a primary PATH shim at `$HOME\.local\aegis\bin\aegis.cmd`.
 
-Compatibility aliases remain during migration:
+Compatibility aliases:
 
-- `harness-cli` forwards to Aegis.
-- `opencode-harness-cli` forwards to Aegis.
-- `aegis work-map` and `harness-cli work-map` are accepted legacy forms for `aegis cell`.
+- `aegis` is the primary command.
+- `opencode-aegis` remains a migration alias.
+- `work-map` is a legacy command form that still routes to `cell` during transition.
 
 Open a new terminal after install so the higher-priority shim is used instead of any older locked executable.
 
@@ -102,7 +102,7 @@ aegis latest --search "Ship:" --all --limit 20
 
 Use `cell` when a coordinator needs durable state for a recursive coordination graph: cells, child cells, workstreams, roles, clones, sessions, evidence, final handoffs, blockers, and integration notes.
 
-Records are stored outside target repos by default under `AEGIS_CELL_DIR`, or the platform app-data `aegis/cells` directory when the variable is unset. The legacy `HARNESS_CLI_WORK_MAP_DIR` alias and `harness-cli/work-map` fallback are still accepted.
+Records are stored outside target repos by default under `AEGIS_CELL_DIR`, or the platform app-data `aegis/cells` directory when the variable is unset. The legacy `HARNESS_CLI_WORK_MAP_DIR` alias and `aegis cell` fallback command form are still accepted.
 
 Create a cell, attach clone-backed workstreams, fork child cells when a worker needs to split work further, fan out worker sessions, and render an optional observer view:
 
