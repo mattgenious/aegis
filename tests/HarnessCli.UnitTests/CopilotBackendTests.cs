@@ -194,7 +194,7 @@ public class CopilotBackendTests
                 var startInfo = CopilotProcess.CreateStartInfo("copilot", ["--version"]);
 
                 Assert.Equal("powershell.exe", startInfo.FileName);
-                Assert.True(startInfo.Environment.TryGetValue("HARNESS_CLI_COPILOT_COMMAND_SCRIPT", out var resolved));
+                Assert.True(startInfo.Environment.TryGetValue("AEGIS_COPILOT_COMMAND_SCRIPT", out var resolved));
                 Assert.Equal(commandPath, resolved, ignoreCase: true);
             }
             finally

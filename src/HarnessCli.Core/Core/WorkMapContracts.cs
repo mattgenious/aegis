@@ -4,7 +4,7 @@ public sealed record WorkMapMissionRecord
 {
     public int SchemaVersion { get; init; } = 1;
 
-    public string Kind { get; init; } = "mission";
+    public string Kind { get; init; } = "cell";
 
     public string Id { get; init; } = string.Empty;
 
@@ -13,6 +13,10 @@ public sealed record WorkMapMissionRecord
     public string? Intent { get; init; }
 
     public string Status { get; init; } = "planned";
+
+    public string? ParentCellId { get; init; }
+
+    public List<string> ChildCellIds { get; init; } = [];
 
     public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
 
@@ -223,7 +227,7 @@ public sealed record WorkMapStoreSnapshot
 {
     public int SchemaVersion { get; init; } = 1;
 
-    public string Kind { get; init; } = "workMapSnapshot";
+    public string Kind { get; init; } = "cellStoreSnapshot";
 
     public DateTimeOffset ExportedAtUtc { get; init; } = DateTimeOffset.UtcNow;
 

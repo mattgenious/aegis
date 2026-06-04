@@ -71,7 +71,7 @@ internal static partial class Program
         try
         {
             var command = args[0];
-            if (command == "work-map")
+            if (command is "cell" or "cell")
             {
                 return await RunWorkMapCommand(args.Skip(1).ToArray());
             }
@@ -1796,55 +1796,56 @@ internal static partial class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-harness-cli - deterministic helper for delegated agent sessions
+aegis - deterministic helper for delegated agent sessions
 
 Goal:
   Start delegated backend sessions, force a final handoff summary, fetch only
-  that summary when needed, and keep lightweight work-map records for complex
+  that summary when needed, and keep lightweight cell records for complex
   multi-agent coordination.
 
 Golden path:
-  harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
-  harness-cli ask --timeout 900 --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
-  harness-cli last-summary --session ses_... --plain
+  aegis ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
+  aegis ask --timeout 900 --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
+  aegis last-summary --session ses_... --plain
 
 Command help:
-  harness-cli help watch
-  harness-cli watch --help
-  harness-cli watch -h
+  aegis help watch
+  aegis watch --help
+  aegis watch -h
 
 Compatibility:
   opencode-harness-cli is a migration alias for the same command when installed
   by the workspace plugin or emitted by dotnet publish.
 
 Usage:
-  harness-cli ensure-server [--server http://127.0.0.1:4096] [--hostname 0.0.0.0] [--port 4096]
-  harness-cli health [--server URL]
-  harness-cli self-test
-  harness-cli new --title TITLE [--parent ses_...]
-  harness-cli spawn --target TARGET [--target TARGET...] [--model provider/model] [--directory PATH]
-  harness-cli latest [--search TEXT] [--limit 20]
-  harness-cli ask --prompt TEXT [--profile fast|cheap|deep] [--model provider/model] [--variant low] [--agent build] [--title TITLE]
-  harness-cli ask --prompt-file task.md --timeout 600 --model github-copilot/gpt-5.4-mini
-  harness-cli ask --prompt-file task.md --async --model github-copilot/gpt-5.4-mini
-  harness-cli status [--session ses_...]
-  harness-cli wait --session ses_...
-  harness-cli last-summary --session ses_... [--plain]
-  harness-cli messages --session ses_... [--limit 20]
-  harness-cli tail --session ses_... [--limit 20] [--interval-seconds 5] [--once]
-  harness-cli events [--limit 10] [--timeout 30]
-  harness-cli abort --session ses_...
-  harness-cli watch --session ses_... [--interval-minutes 60] [--until-idle]
-  harness-cli watch-many --session ses_... --session ses_... [--until-idle]
-  harness-cli export --session ses_... [--format json|md] [--output FILE]
-  harness-cli work-map create --title TITLE [--intent TEXT]
-  harness-cli work-map stream add --mission ID --name NAME [--clone PATH]
-  harness-cli work-map launch --mission ID [--dry-run]
-  harness-cli work-map supervise --mission ID [--launch-missing] [--until-idle]
-  harness-cli work-map session run --mission ID --stream ID --backend codex --prompt-file task.md [--model MODEL] [--variant NAME] [--agent NAME] [--directory PATH] [--async] [--wait]
-  harness-cli work-map session sync --mission ID --all
-  harness-cli work-map session handoff --session ID --summary TEXT
-  harness-cli work-map show --mission ID --format json|md|html
+  aegis ensure-server [--server http://127.0.0.1:4096] [--hostname 0.0.0.0] [--port 4096]
+  aegis health [--server URL]
+  aegis self-test
+  aegis new --title TITLE [--parent ses_...]
+  aegis spawn --target TARGET [--target TARGET...] [--model provider/model] [--directory PATH]
+  aegis latest [--search TEXT] [--limit 20]
+  aegis ask --prompt TEXT [--profile fast|cheap|deep] [--model provider/model] [--variant low] [--agent build] [--title TITLE]
+  aegis ask --prompt-file task.md --timeout 600 --model github-copilot/gpt-5.4-mini
+  aegis ask --prompt-file task.md --async --model github-copilot/gpt-5.4-mini
+  aegis status [--session ses_...]
+  aegis wait --session ses_...
+  aegis last-summary --session ses_... [--plain]
+  aegis messages --session ses_... [--limit 20]
+  aegis tail --session ses_... [--limit 20] [--interval-seconds 5] [--once]
+  aegis events [--limit 10] [--timeout 30]
+  aegis abort --session ses_...
+  aegis watch --session ses_... [--interval-minutes 60] [--until-idle]
+  aegis watch-many --session ses_... --session ses_... [--until-idle]
+  aegis export --session ses_... [--format json|md] [--output FILE]
+  aegis cell create --title TITLE [--intent TEXT]
+  aegis cell fork --cell ID --title TITLE [--intent TEXT]
+  aegis cell stream add --cell ID --name NAME [--clone PATH]
+  aegis cell launch --cell ID [--dry-run]
+  aegis cell supervise --cell ID [--launch-missing] [--until-idle]
+  aegis cell session run --cell ID --stream ID --backend codex --prompt-file task.md [--model MODEL] [--variant NAME] [--agent NAME] [--directory PATH] [--async] [--wait]
+  aegis cell session sync --cell ID --all
+  aegis cell session handoff --session ID --summary TEXT
+  aegis cell show --cell ID --format json|md|html
 
 Model examples:
   --model github-copilot/gpt-5.4-mini        Fast delegated work; prefer this for most pseudo-subagents.
@@ -1955,64 +1956,71 @@ Run note:
             case "watch-many": PrintWatchManyHelp(); return 0;
             case "tail": PrintTailHelp(); return 0;
             case "export": PrintExportHelp(); return 0;
+            case "cell":
             case "work-map":
                 PrintWorkMapHelp();
-                WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a mission, then launch linked worker sessions from the map."));
+                WriteWorkMapNextAction(NextCommandHintContext.General("Pick or create a cell, then launch linked worker sessions from it."));
                 return 0;
             default:
-                Console.Error.WriteLine($"Unknown command '{command}'. Run `harness-cli --help` for the command list.");
+                Console.Error.WriteLine($"Unknown command '{command}'. Run `aegis --help` for the command list.");
                 return 1;
         }
     }
 
     private static void PrintWorkMapHelp() => Console.WriteLine("""
-work-map - keep a lightweight mission graph for delegated agent work.
+cell - keep a lightweight recursive coordination cell for delegated agent work.
 
 Usage:
-  harness-cli work-map create --title TITLE [--intent TEXT] [--next-action TEXT]
-  harness-cli work-map list [--format json|md]
-  harness-cli work-map show --mission ID [--format json|md|html] [--output FILE]
-  harness-cli work-map brief --mission ID --stream ID [--output FILE]
-  harness-cli work-map launch --mission ID [--dry-run] [--force] [--include-complete] [--wait]
-  harness-cli work-map supervise --mission ID [--launch-missing] [--until-idle] [--max-runs N]
-  harness-cli work-map serve [--host HOST] [--port PORT] [--access-log FILE]
-  harness-cli work-map store info
-  harness-cli work-map store export [--output FILE]
-  harness-cli work-map store import --file FILE [--force]
-  harness-cli work-map mission update --mission ID [--status STATUS] [--next-action TEXT]
-  harness-cli work-map stream add --mission ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
-  harness-cli work-map stream update --mission ID --stream ID [--status STATUS] [--integration-action TEXT]
-  harness-cli work-map stream delete --mission ID --stream ID [--force]
-  harness-cli work-map session link --mission ID --stream ID --session ID [--backend codex|copilot|manual|external] [--role TEXT]
-  harness-cli work-map session run --mission ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend opencode|codex|pi|copilot] [--model MODEL] [--variant NAME] [--agent NAME] [--directory PATH] [--title TITLE] [--summary-marker TEXT] [--async] [--wait]
-  harness-cli work-map session sync --session ID [--message-limit N]
-  harness-cli work-map session sync --mission ID --all [--message-limit N]
-  harness-cli work-map session update --session ID [--status STATUS] [--display-name NAME]
-  harness-cli work-map session archive --session ID [--summary TEXT]
-  harness-cli work-map session handoff --session ID (--summary TEXT | --file FILE)
-  harness-cli work-map session blocker set --session ID --summary TEXT [--evidence TEXT]
-  harness-cli work-map session verify --session ID --kind KIND --result pass|fail|skip [--summary TEXT]
-  harness-cli work-map evidence add --mission ID [--stream ID] [--session ID] --summary TEXT
-  harness-cli work-map evidence remove --mission ID [--stream ID] [--session ID] --evidence-id ID
+  aegis cell create --title TITLE [--intent TEXT] [--parent-cell ID] [--next-action TEXT]
+  aegis cell fork --cell ID --title TITLE [--intent TEXT] [--next-action TEXT]
+  aegis cell list [--format json|md]
+  aegis cell show --cell ID [--format json|md|html] [--output FILE]
+  aegis cell brief --cell ID --stream ID [--output FILE]
+  aegis cell launch --cell ID [--dry-run] [--force] [--include-complete] [--wait]
+  aegis cell supervise --cell ID [--launch-missing] [--until-idle] [--max-runs N]
+  aegis cell serve [--host HOST] [--port PORT] [--access-log FILE]
+  aegis cell store info
+  aegis cell store export [--output FILE]
+  aegis cell store import --file FILE [--force]
+  aegis cell update --cell ID [--status STATUS] [--next-action TEXT]
+  aegis cell stream add --cell ID --name NAME [--role TEXT] [--target TEXT] [--clone PATH]
+  aegis cell stream update --cell ID --stream ID [--status STATUS] [--integration-action TEXT]
+  aegis cell stream delete --cell ID --stream ID [--force]
+  aegis cell session link --cell ID --stream ID --session ID [--backend codex|copilot|manual|external] [--role TEXT]
+  aegis cell session run --cell ID --stream ID (--prompt TEXT | --prompt-file FILE) [--backend opencode|codex|pi|copilot] [--model MODEL] [--variant NAME] [--agent NAME] [--directory PATH] [--title TITLE] [--summary-marker TEXT] [--async] [--wait]
+  aegis cell session sync --session ID [--message-limit N]
+  aegis cell session sync --cell ID --all [--message-limit N]
+  aegis cell session update --session ID [--status STATUS] [--display-name NAME]
+  aegis cell session archive --session ID [--summary TEXT]
+  aegis cell session handoff --session ID (--summary TEXT | --file FILE)
+  aegis cell session blocker set --session ID --summary TEXT [--evidence TEXT]
+  aegis cell session verify --session ID --kind KIND --result pass|fail|skip [--summary TEXT]
+  aegis cell evidence add --cell ID [--stream ID] [--session ID] --summary TEXT
+  aegis cell evidence remove --cell ID [--stream ID] [--session ID] --evidence-id ID
 
 Notes:
-  Work-map records are stored outside target repos by default under HARNESS_CLI_WORK_MAP_DIR
-  or the platform app-data harness-cli/work-map directory.
-  launch fans out from an existing map and uses Codex by default unless --backend overrides it.
-  supervise syncs mission sessions and reports quiet, active, blocked, and handoff counts.
+  cell records are stored outside target repos by default under AEGIS_CELL_DIR
+  or the platform app-data aegis/cells directory. HARNESS_CLI_WORK_MAP_DIR remains
+  accepted as a legacy environment alias.
+  fork creates a child cell linked to its parent, so delegated workers can recursively
+  split their assigned scope into smaller cells when that is useful.
+  launch fans out from an existing cell and uses Codex by default unless --backend overrides it.
+  supervise syncs cell sessions and reports quiet, active, blocked, and handoff counts.
   store export/import writes portable JSON snapshots; the runtime store remains a JSON directory.
-  session run links the work-map session before posting the backend prompt, so long-running
+  session run links the cell session before posting the backend prompt, so long-running
   workers are visible to show, supervise, and the observer UI while they are still active.
   session run accepts the same execution controls as ask where the selected backend supports
   them: --model, --variant/--reasoning, --agent, --directory, --title, --summary-marker,
   --timeout, --raw, --no-reply, and Copilot permission flags. These controls are stored on
-  the work-map session record so the observer API/UI can show what was launched.
+  the cell session record so the observer API/UI can show what was launched.
   If --model is omitted, the selected backend uses its own configured/default model. The JSON
   output includes the resolved provider/model/variant/agent/directory metadata when known.
   For compatibility, --backend copilot with --model github-copilot/<model> is routed through
-  the OpenCode GitHub Copilot provider, matching `harness-cli ask --model github-copilot/<model>`.
+  the OpenCode GitHub Copilot provider, matching `aegis ask --model github-copilot/<model>`.
   Use --backend copilot without a github-copilot provider model for the standalone Copilot CLI
   backend.
+  The legacy `aegis work-map` and `harness-cli work-map` command forms remain accepted
+  during migration; use `aegis cell` for new briefs, docs, and automation.
   session link/update accept manual external backend labels for non-harness workers such as
   shipper, background, human, or external coordinator sessions; sync skips those records.
   serve starts an optional read-only React observer UI over the same records and logs each
@@ -2020,8 +2028,8 @@ Notes:
   For Tailscale Serve without firewall changes, keep the default loopback bind and run
   `tailscale serve --bg http://127.0.0.1:4896/`. Use --host 0.0.0.0 only for direct
   access from another device on the same trusted network or Tailscale IP.
-  The records describe missions, workstreams, clones, sessions, evidence, handoffs, blockers,
-  and verification observations. They are not a workflow engine.
+  The records describe cells, child cells, streams, clones, sessions, evidence, handoffs,
+  blockers, and verification observations. They are not a workflow engine.
   Use clone/clone-path language for isolated agent work; this command does not create git worktrees.
   The html format is a static optional observer view over the same records.
 """);
@@ -2030,21 +2038,21 @@ Notes:
 health - check whether the OpenCode HTTP server is reachable.
 
 Usage:
-  harness-cli health [--server URL]
+  aegis health [--server URL]
 
 Options:
   --server URL  OpenCode server URL. Default: http://127.0.0.1:4096
 
 Examples:
-  harness-cli health
-  harness-cli health --server http://127.0.0.1:4096
+  aegis health
+  aegis health --server http://127.0.0.1:4096
 """);
 
     private static void PrintEnsureServerHelp() => Console.WriteLine("""
 ensure-server - start or reuse a local unauthenticated OpenCode server.
 
 Usage:
-  harness-cli ensure-server [--server URL] [--hostname HOST] [--port N] [--directory PATH] [--timeout SECONDS] [--print-logs] [--log-dir PATH] [--log-level LEVEL]
+  aegis ensure-server [--server URL] [--hostname HOST] [--port N] [--directory PATH] [--timeout SECONDS] [--print-logs] [--log-dir PATH] [--log-level LEVEL]
 
 Options:
   --server URL       Server URL to check first. Default: http://127.0.0.1:4096
@@ -2060,22 +2068,22 @@ Notes:
   Removes OPENCODE_SERVER_USERNAME and OPENCODE_SERVER_PASSWORD from the child server process so inherited Basic auth settings do not break local automation.
 
 Examples:
-  harness-cli ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
-  harness-cli ensure-server --directory E:\ --timeout 60
+  aegis ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
+  aegis ensure-server --directory E:\ --timeout 60
 """);
 
     private static void PrintSelfTestHelp() => Console.WriteLine("""
 self-test - run local parser tests without contacting OpenCode.
 
 Usage:
-  harness-cli self-test
+  aegis self-test
 """);
 
     private static void PrintNewHelp() => Console.WriteLine("""
 new - create a new OpenCode session.
 
 Usage:
-  harness-cli new --title TITLE [--parent ses_...] [--directory PATH] [--server URL]
+  aegis new --title TITLE [--parent ses_...] [--directory PATH] [--server URL]
 
 Options:
   --title TITLE     Session title.
@@ -2083,15 +2091,15 @@ Options:
   --directory PATH  Project directory associated with the session.
 
 Examples:
-  harness-cli new --title "scratch"
-  harness-cli new --title "Ship: issue #5" --directory E:\work\baton
+  aegis new --title "scratch"
+  aegis new --title "Ship: issue #5" --directory E:\work\baton
 """);
 
     private static void PrintLatestHelp() => Console.WriteLine("""
 latest - find recent sessions, optionally by title/search text.
 
 Usage:
-  harness-cli latest [--search TEXT] [--limit N] [--all] [--server URL]
+  aegis latest [--search TEXT] [--limit N] [--all] [--server URL]
 
 Options:
   --search TEXT  Filter sessions by search text.
@@ -2099,15 +2107,15 @@ Options:
   --all          Print all returned sessions instead of only the first.
 
 Examples:
-  harness-cli latest --search "Ship:"
-  harness-cli latest --search "Ship:" --all --limit 20
+  aegis latest --search "Ship:"
+  aegis latest --search "Ship:" --all --limit 20
 """);
 
     private static void PrintAskHelp() => Console.WriteLine("""
 ask - send a task prompt to a new or existing OpenCode session.
 
 Usage:
-  harness-cli ask (--prompt TEXT | --prompt-file FILE | stdin) [options]
+  aegis ask (--prompt TEXT | --prompt-file FILE | stdin) [options]
 
 Options:
   --session ses_...       Existing session. If omitted, a new session is created.
@@ -2129,17 +2137,17 @@ Options:
   --directory PATH        Project directory associated with the request.
 
 Examples:
-  harness-cli ask --profile fast --prompt-file task.md
-  harness-cli ask --prompt-file task.md --timeout 900 --model github-copilot/gpt-5.5
-  harness-cli ask --async --prompt-file task.md --model github-copilot/gpt-5.4-mini --variant low
-  harness-cli ask --session ses_... --no-reply --prompt "Context only."
+  aegis ask --profile fast --prompt-file task.md
+  aegis ask --prompt-file task.md --timeout 900 --model github-copilot/gpt-5.5
+  aegis ask --async --prompt-file task.md --model github-copilot/gpt-5.4-mini --variant low
+  aegis ask --session ses_... --no-reply --prompt "Context only."
 """);
 
     private static void PrintSpawnHelp() => Console.WriteLine("""
 spawn - launch one delegated worker session per target.
 
 Usage:
-  harness-cli spawn --target TARGET [--target TARGET...] [options]
+  aegis spawn --target TARGET [--target TARGET...] [options]
 
 Options:
   --target TEXT              Target to launch. Repeat for multiple sessions.
@@ -2153,40 +2161,40 @@ Options:
   --timeout SECONDS          Wait timeout when --wait is set. Default: 300.
 
 Examples:
-  harness-cli spawn --target "issue #5" --target "issue #4" --directory E:\work\baton --model github-copilot/gpt-5.5
-  harness-cli spawn --target "issue #5" --resume-session "issue #5=ses_..."
+  aegis spawn --target "issue #5" --target "issue #4" --directory E:\work\baton --model github-copilot/gpt-5.5
+  aegis spawn --target "issue #5" --resume-session "issue #5=ses_..."
 """);
 
     private static void PrintStatusHelp() => Console.WriteLine("""
 status - show current OpenCode session activity state.
 
 Usage:
-  harness-cli status [--session ses_...] [--server URL]
+  aegis status [--session ses_...] [--server URL]
 
 Examples:
-  harness-cli status
-  harness-cli status --session ses_...
+  aegis status
+  aegis status --session ses_...
 """);
 
     private static void PrintMessagesHelp() => Console.WriteLine("""
 messages - print recent session messages as raw JSON.
 
 Usage:
-  harness-cli messages --session ses_... [--limit N] [--directory PATH]
+  aegis messages --session ses_... [--limit N] [--directory PATH]
 
 Options:
   --session ses_...  Required session id.
   --limit N          Maximum messages. Default: 20.
 
 Example:
-  harness-cli messages --session ses_... --limit 20
+  aegis messages --session ses_... --limit 20
 """);
 
     private static void PrintLastSummaryHelp() => Console.WriteLine("""
 last-summary - extract the fresh assistant final handoff after the latest user prompt.
 
 Usage:
-  harness-cli last-summary --session ses_... [--summary-marker TEXT] [--plain]
+  aegis last-summary --session ses_... [--summary-marker TEXT] [--plain]
 
 Options:
   --session ses_...      Required session id.
@@ -2197,14 +2205,14 @@ Freshness:
   Historical handoffs before the latest user prompt are ignored. If the latest prompt has no fresh final handoff yet, this command exits non-zero and says so instead of returning a stale summary.
 
 Example:
-  harness-cli last-summary --session ses_... --plain
+  aegis last-summary --session ses_... --plain
 """);
 
     private static void PrintWaitHelp() => Console.WriteLine("""
 wait - passively wait until OpenCode reports a session is idle.
 
 Usage:
-  harness-cli wait --session ses_...
+  aegis wait --session ses_...
 
 Options:
   --session ses_...  Required session id.
@@ -2216,38 +2224,38 @@ Behavior:
   Does not require a fresh FINAL HANDOFF. Use last-summary when you need handoff text.
 
 Example:
-  harness-cli wait --session ses_...
+  aegis wait --session ses_...
 """);
 
     private static void PrintAbortHelp() => Console.WriteLine("""
 abort - abort an OpenCode session deliberately.
 
 Usage:
-  harness-cli abort --session ses_...
+  aegis abort --session ses_...
 
 Example:
-  harness-cli abort --session ses_...
+  aegis abort --session ses_...
 """);
 
     private static void PrintEventsHelp() => Console.WriteLine("""
 events - sample OpenCode server event stream briefly.
 
 Usage:
-  harness-cli events [--limit N] [--timeout SECONDS] [--server URL]
+  aegis events [--limit N] [--timeout SECONDS] [--server URL]
 
 Options:
   --limit N          Maximum events. Default: 10.
   --timeout SECONDS  Stream timeout. Default: 30.
 
 Example:
-  harness-cli events --limit 10 --timeout 30
+  aegis events --limit 10 --timeout 30
 """);
 
     private static void PrintWatchHelp() => Console.WriteLine("""
 watch - send a raw supervision prompt to one session, optionally recurring.
 
 Usage:
-  harness-cli watch --session ses_... [--prompt TEXT | --prompt-file FILE | stdin] [options]
+  aegis watch --session ses_... [--prompt TEXT | --prompt-file FILE | stdin] [options]
 
 Options:
   --session ses_...          Required session id.
@@ -2266,16 +2274,16 @@ Safety:
   Prefer --until-idle, --max-runs, or --max-duration-minutes for bounded supervision unless you intentionally want an indefinite loop.
 
 Examples:
-  harness-cli watch --session ses_... --directory E:\ --interval-minutes 15 --prompt-file watch.md
-  harness-cli watch --session ses_... --until-idle --max-runs 12 --interval-minutes 10
-  harness-cli watch --session ses_... --dry-run --once --prompt "Check progress."
+  aegis watch --session ses_... --directory E:\ --interval-minutes 15 --prompt-file watch.md
+  aegis watch --session ses_... --until-idle --max-runs 12 --interval-minutes 10
+  aegis watch --session ses_... --dry-run --once --prompt "Check progress."
 """);
 
     private static void PrintWatchManyHelp() => Console.WriteLine("""
 watch-many - send raw supervision prompts to multiple sessions, optionally recurring.
 
 Usage:
-  harness-cli watch-many --session ses_a --session ses_b [--prompt TEXT | --prompt-file FILE | stdin] [options]
+  aegis watch-many --session ses_a --session ses_b [--prompt TEXT | --prompt-file FILE | stdin] [options]
 
 Options:
   --session ses_...          Session id. Repeat for each session to supervise.
@@ -2289,15 +2297,15 @@ Options:
   --dry-run                  Print what would be sent without calling OpenCode.
 
 Examples:
-  harness-cli watch-many --session ses_a --session ses_b --until-idle --max-duration-minutes 120 --prompt-file watch.md
-  harness-cli watch-many --session ses_a --session ses_b --dry-run --max-runs 1 --prompt "Check progress."
+  aegis watch-many --session ses_a --session ses_b --until-idle --max-duration-minutes 120 --prompt-file watch.md
+  aegis watch-many --session ses_a --session ses_b --dry-run --max-runs 1 --prompt "Check progress."
 """);
 
     private static void PrintTailHelp() => Console.WriteLine("""
 tail - poll compact recent text messages from a session.
 
 Usage:
-  harness-cli tail --session ses_... [--limit N] [--interval-seconds N] [--once]
+  aegis tail --session ses_... [--limit N] [--interval-seconds N] [--once]
 
 Options:
   --session ses_...       Required session id.
@@ -2306,15 +2314,15 @@ Options:
   --once                  Print one snapshot and exit.
 
 Examples:
-  harness-cli tail --session ses_... --limit 20 --once
-  harness-cli tail --session ses_... --interval-seconds 5
+  aegis tail --session ses_... --limit 20 --once
+  aegis tail --session ses_... --interval-seconds 5
 """);
 
     private static void PrintExportHelp() => Console.WriteLine("""
 export - save session status, final summary, and messages as JSON or Markdown.
 
 Usage:
-  harness-cli export --session ses_... [--format json|md] [--output FILE] [--limit N]
+  aegis export --session ses_... [--format json|md] [--output FILE] [--limit N]
 
 Options:
   --session ses_...  Required session id.
@@ -2323,8 +2331,8 @@ Options:
   --limit N          Limit exported messages. Default: full message history.
 
 Examples:
-  harness-cli export --session ses_... --format json --output session.json
-  harness-cli export --session ses_... --format md --output session.md
+  aegis export --session ses_... --format json --output session.json
+  aegis export --session ses_... --format md --output session.md
 """);
 
     private sealed record Summary(string MessageId, string PartId, string Text);

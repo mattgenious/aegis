@@ -37,7 +37,7 @@ internal static partial class Program
         {
             listener.Start();
             var displayHost = FormatWorkMapUrlHost(host, address);
-            Console.WriteLine($"Work-map observer listening on http://{displayHost}:{port}/");
+            Console.WriteLine($"cell observer listening on http://{displayHost}:{port}/");
             Console.WriteLine($"Reading records from {WorkMapDataDirectory(store)}");
             Console.WriteLine("Request access log is written to stderr.");
             if (accessLogger.FilePath is not null)
@@ -67,7 +67,7 @@ internal static partial class Program
                         }
                         catch (Exception ex) when (!cancellation.IsCancellationRequested)
                         {
-                            Console.Error.WriteLine($"work-map serve request failed: {ex.Message}");
+                            Console.Error.WriteLine($"cell serve request failed: {ex.Message}");
                         }
                     },
                     CancellationToken.None);
@@ -136,7 +136,7 @@ internal static partial class Program
                     await WriteWorkMapJsonHttpResponseAsync(
                         stream,
                         statusCode.Value,
-                        new { error = "Failed to read work-map JSON records.", detail = ex.Message },
+                        new { error = "Failed to read cell JSON records.", detail = ex.Message },
                         isHead,
                         cancellationToken);
                 }
@@ -146,7 +146,7 @@ internal static partial class Program
                     await WriteWorkMapJsonHttpResponseAsync(
                         stream,
                         statusCode.Value,
-                        new { error = "Failed to read work-map records.", detail = ex.Message },
+                        new { error = "Failed to read cell records.", detail = ex.Message },
                         isHead,
                         cancellationToken);
                 }
@@ -180,7 +180,8 @@ internal static partial class Program
             return StatusCodes.Ok;
         }
 
-        if (request.Path.Equals("/api/missions", StringComparison.OrdinalIgnoreCase))
+        if (request.Path.Equals("/api/cells", StringComparison.OrdinalIgnoreCase)
+            || request.Path.Equals("/api/missions", StringComparison.OrdinalIgnoreCase))
         {
             await WriteWorkMapJsonHttpResponseAsync(
                 stream,
@@ -191,10 +192,9 @@ internal static partial class Program
             return StatusCodes.Ok;
         }
 
-        const string missionPrefix = "/api/missions/";
-        if (request.Path.StartsWith(missionPrefix, StringComparison.OrdinalIgnoreCase))
+        var missionId = ReadCellApiId(request.Path);
+        if (missionId is not null)
         {
-            var missionId = request.Path[missionPrefix.Length..];
             if (missionId.Contains('/', StringComparison.Ordinal))
             {
                 await WriteWorkMapNotFoundAsync(stream, isHead, cancellationToken);
@@ -266,6 +266,20 @@ internal static partial class Program
         }
 
         return new WorkMapOverview(DateTimeOffset.UtcNow, WorkMapDataDirectory(store), bundles);
+    }
+
+    private static string? ReadCellApiId(string path)
+    {
+        const string cellPrefix = "/api/cells/";
+        const string missionPrefix = "/api/missions/";
+        if (path.StartsWith(cellPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return path[cellPrefix.Length..];
+        }
+
+        return path.StartsWith(missionPrefix, StringComparison.OrdinalIgnoreCase)
+            ? path[missionPrefix.Length..]
+            : null;
     }
 
     private static async Task<WorkMapBundle> BuildWorkMapMissionDetailAsync(
@@ -541,10 +555,10 @@ internal static partial class Program
     private static string MissingWorkMapUiHtml() => """
         <!doctype html>
         <html lang="en">
-        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Work Map UI Missing</title></head>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aegis Cell UI Missing</title></head>
         <body style="font-family:system-ui,sans-serif;margin:2rem;line-height:1.5">
-        <h1>Work-map observer UI is not built</h1>
-        <p>Build the optional React bundle from <code>src/HarnessCli/WorkMapUi</code>, then run <code>harness-cli work-map serve</code> again.</p>
+        <h1>cell observer UI is not built</h1>
+        <p>Build the optional React bundle from <code>src/HarnessCli/WorkMapUi</code>, then run <code>aegis cell serve</code> again.</p>
         <pre>npm install
         npm run build</pre>
         </body>
@@ -619,7 +633,7 @@ internal static partial class Program
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
             {
-                Console.Error.WriteLine($"work-map serve access log failed: {ex.Message}");
+                Console.Error.WriteLine($"cell serve access log failed: {ex.Message}");
             }
         }
     }
@@ -637,14 +651,20 @@ internal static partial class Program
     private sealed record WorkMapOverview(
         DateTimeOffset GeneratedAtUtc,
         string DataDirectory,
-        IReadOnlyList<WorkMapBundle> Missions);
+        IReadOnlyList<WorkMapBundle> Cells)
+    {
+        public IReadOnlyList<WorkMapBundle> Missions => Cells;
+    }
 
     private sealed record WorkMapSessionDetail(
         DateTimeOffset GeneratedAtUtc,
         string DataDirectory,
-        WorkMapMissionRecord? Mission,
+        WorkMapMissionRecord? Cell,
         WorkMapWorkstreamRecord? Workstream,
-        WorkMapAgentSessionRecord Session);
+        WorkMapAgentSessionRecord Session)
+    {
+        public WorkMapMissionRecord? Mission => Cell;
+    }
 
     private sealed record WorkMapObserverHealth(DateTimeOffset GeneratedAtUtc, string DataDirectory, string Status);
 

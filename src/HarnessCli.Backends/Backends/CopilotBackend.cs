@@ -340,7 +340,8 @@ public sealed class CopilotBackend : ISessionBackend
     private static string ResolveCopilotBinary(string? copilotBinary)
     {
         if (!string.IsNullOrWhiteSpace(copilotBinary)) return copilotBinary;
-        var configured = Environment.GetEnvironmentVariable("HARNESS_CLI_COPILOT_BINARY");
+        var configured = Environment.GetEnvironmentVariable("AEGIS_COPILOT_BINARY")
+                         ?? Environment.GetEnvironmentVariable("HARNESS_CLI_COPILOT_BINARY");
         return string.IsNullOrWhiteSpace(configured) ? CopilotBinary : configured;
     }
 

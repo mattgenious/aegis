@@ -9,16 +9,24 @@ public sealed class DefaultWorkMapPathProvider : IWorkMapPathProvider
 
     private static string ResolvePath()
     {
-        var explicitPath = Environment.GetEnvironmentVariable("HARNESS_CLI_WORK_MAP_DIR");
+        var explicitPath = Environment.GetEnvironmentVariable("AEGIS_CELL_DIR")
+                           ?? Environment.GetEnvironmentVariable("HARNESS_CLI_WORK_MAP_DIR");
         if (!string.IsNullOrWhiteSpace(explicitPath))
         {
             return Path.GetFullPath(explicitPath);
         }
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        return !string.IsNullOrWhiteSpace(appData)
-            ? Path.Combine(appData, "harness-cli", "work-map")
-            : Path.Combine(Path.GetTempPath(), "harness-cli", "work-map");
+        if (!string.IsNullOrWhiteSpace(appData))
+        {
+            var aegisPath = Path.Combine(appData, "aegis", "cells");
+            var legacyPath = Path.Combine(appData, "harness-cli", "work-map");
+            return !Directory.Exists(aegisPath) && Directory.Exists(legacyPath) ? legacyPath : aegisPath;
+        }
+
+        var tempAegisPath = Path.Combine(Path.GetTempPath(), "aegis", "cells");
+        var tempLegacyPath = Path.Combine(Path.GetTempPath(), "harness-cli", "work-map");
+        return !Directory.Exists(tempAegisPath) && Directory.Exists(tempLegacyPath) ? tempLegacyPath : tempAegisPath;
     }
 }
 
@@ -118,7 +126,7 @@ public sealed class FileWorkMapStore : IWorkMapStore
                 var current = await LoadUnlockedAsync<T>(path, cancellationToken).ConfigureAwait(false);
                 if (current is null)
                 {
-                    throw new ArgumentException($"Unknown work-map record '{Path.GetFileNameWithoutExtension(path)}'.");
+                    throw new ArgumentException($"Unknown cell record '{Path.GetFileNameWithoutExtension(path)}'.");
                 }
 
                 updated = update(current);
