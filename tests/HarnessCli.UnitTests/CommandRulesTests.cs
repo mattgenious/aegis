@@ -57,7 +57,8 @@ public class CommandRulesTests
 
         Assert.True(File.Exists(cliProjectPath), "CLI app project should use the backend-agnostic HarnessCli name.");
         Assert.False(File.Exists(legacyProjectPath), "The old OpenCode-specific project name should not be restored.");
-        Assert.Contains("<AssemblyName>harness-cli</AssemblyName>", cliProject);
+        Assert.Contains("<AssemblyName>aegis</AssemblyName>", cliProject);
+        Assert.Contains("harness-cli.cmd", cliProject);
         Assert.Contains("opencode-harness-cli.cmd", cliProject);
         Assert.Contains("src\\HarnessCli\\HarnessCli.csproj", solution);
         Assert.DoesNotContain("OpencodeHarnessCli", solution);

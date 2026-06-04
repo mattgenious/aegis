@@ -4,7 +4,7 @@ using HarnessCli.Core;
 namespace HarnessCli.Infrastructure;
 
 public sealed class UnknownSessionException(string sessionId)
-    : InvalidOperationException($"Unknown or expired session id: '{sessionId}'. Use a valid session returned by harness-cli.")
+    : InvalidOperationException($"Unknown or expired session id: '{sessionId}'. Use a valid session returned by aegis.")
 {
     public string SessionId { get; } = sessionId;
 }
@@ -89,4 +89,3 @@ public sealed class SessionRegistryService
     public Task<int> CleanupAsync(TimeSpan maxAge, CancellationToken cancellationToken = default) =>
         _registry.RemoveExpiredAsync(maxAge, cancellationToken);
 }
-

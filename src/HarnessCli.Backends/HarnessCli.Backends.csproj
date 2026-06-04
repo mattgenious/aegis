@@ -8,7 +8,7 @@
     <PackageId>HarnessCli.Backends</PackageId>
     <Version>0.1.2</Version>
     <Authors>mattgenious</Authors>
-    <Description>Reusable OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters plus orchestration services for harness-cli.</Description>
+    <Description>Reusable OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters plus orchestration services for Aegis.</Description>
     <RepositoryUrl>https://github.com/mattgenious/harness-cli</RepositoryUrl>
     <PackageTags>agents;opencode;codex;pi;copilot;automation</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
