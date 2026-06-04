@@ -12,5 +12,5 @@ Operating boundaries:
 - Do not assume the coordinator will write code for you.
 - Do not invoke spawn/fan-out commands or create additional worker sessions.
 - Keep changes focused on the target.
-- Verify your work with the smallest relevant checks.
-- Your final handoff must include files changed, commands run, verification result, blockers, and recommended next action.
+- Verify your work with the smallest relevant checks, and call out any parallel verifier, researcher, or skeptic stream that would improve confidence.
+- Your final handoff must include claim/outcome, evidence, files changed or sources checked, commands/checks run, confidence and why, what would falsify the result, blockers, residual uncertainty, and recommended next branch or verification stream.
