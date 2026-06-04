@@ -127,6 +127,8 @@ harness-cli latest --search "Ship:" --all --limit 20
 
 Use `work-map` when a coordinator needs durable state for a mission graph: workstreams, roles, clones, sessions, evidence, final handoffs, blockers, and integration notes. Records are stored outside target repos by default under `HARNESS_CLI_WORK_MAP_DIR`, or the platform app-data `harness-cli/work-map` directory when the variable is unset.
 
+Work-map coordination is velocity-first: when uncertainty, missing evidence, independent slices, or competing hypotheses exist, fan out worker streams early, require comparison-ready handoffs, verify in parallel where practical, then consolidate, prune, and redirect from evidence.
+
 Create a mission, attach clone-backed workstreams, fan out worker sessions, and render an optional observer view:
 
 ```powershell
