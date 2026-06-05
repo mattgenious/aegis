@@ -78,7 +78,7 @@ public sealed class CopilotBackend : ISessionBackend
             return CommandResult.Success("Prompt recorded without calling Copilot because --no-reply was set.");
         }
 
-        var prompt = request.Raw ? request.Text : BuildHarnessPrompt(request.Text, request.SummaryMarker);
+        var prompt = request.Raw ? request.Text : BuildDelegationPrompt(request.Text, request.SummaryMarker);
         var startInfo = CopilotProcess.CreateStartInfo(_copilotBinary, BuildArguments(session, request, prompt));
 
         if (!string.IsNullOrWhiteSpace(session.Directory))
@@ -321,7 +321,7 @@ public sealed class CopilotBackend : ISessionBackend
         return parsed?.ApiStatus ?? "idle";
     }
 
-    private static string BuildHarnessPrompt(string prompt, string marker)
+    private static string BuildDelegationPrompt(string prompt, string marker)
     {
         return PromptTemplates.Render("delegation/copilot.md", new Dictionary<string, string>
         {

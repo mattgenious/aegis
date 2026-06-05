@@ -1,6 +1,6 @@
 # Aegis
 
-> This repository is still named `aegis` during the migration. The command and product identity are now Aegis; the repo rename is a later step.
+> The command, product, repository, and source checkout identity are Aegis. Legacy command aliases remain documented only for migration compatibility.
 
 Aegis is a small .NET helper for deterministic delegated agent sessions and durable coordination state across supported backends. It gives agents a stable way to launch delegated sessions, enforce a final handoff summary contract, fetch summaries without loading full transcripts, and keep lightweight recursive cell records for multi-agent coordination.
 
@@ -102,7 +102,7 @@ aegis latest --search "Ship:" --all --limit 20
 
 Use `cell` when a coordinator needs durable state for a recursive coordination graph: cells, child cells, workstreams, roles, clones, sessions, evidence, final handoffs, blockers, and integration notes.
 
-Records are stored outside target repos by default under `AEGIS_CELL_DIR`, or the platform app-data `aegis/cells` directory when the variable is unset. The legacy `HARNESS_CLI_WORK_MAP_DIR` alias and `aegis cell` fallback command form are still accepted.
+Records are stored outside target repos by default under `AEGIS_CELL_DIR`, or the platform app-data `aegis/cells` directory when the variable is unset. The legacy `HARNESS_CLI_WORK_MAP_DIR` alias and `aegis work-map` fallback command form are still accepted.
 
 Create a cell, attach clone-backed workstreams, fork child cells when a worker needs to split work further, fan out worker sessions, and render an optional observer view:
 
