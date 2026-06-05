@@ -1,8 +1,11 @@
 param(
     [string]$AegisProject,
     [string]$InstallRoot,
+    [string]$VSCodeTargetRoot,
+    [string]$VSCodeWorkspaceRoot,
     [int]$KeepVersions = 1,
     [switch]$NoPathUpdate,
+    [switch]$InstallVSCodeSupport,
     [switch]$DryRun
 )
 
@@ -124,6 +127,9 @@ function Ensure-UserPath {
 Write-Host "Aegis standalone install"
 Write-Host "Project: $AegisProject"
 Write-Host "Install root: $installRootFull"
+if ($InstallVSCodeSupport) {
+    Write-Host "VS Code support: enabled"
+}
 
 if ($DryRun) {
     Write-InstallLine "would publish Aegis -> $versionRoot"
@@ -179,6 +185,28 @@ if (Test-Path -LiteralPath $versionsRoot -PathType Container) {
 }
 
 Ensure-UserPath $binRoot
+
+if ($InstallVSCodeSupport) {
+    $vscodeInstaller = Join-Path $scriptDir "install-vscode.ps1"
+    if (-not (Test-Path -LiteralPath $vscodeInstaller -PathType Leaf)) {
+        throw "VS Code support installer not found: $vscodeInstaller"
+    }
+
+    $vscodeArgs = @{}
+    if ($VSCodeTargetRoot) {
+        $vscodeArgs["TargetRoot"] = $VSCodeTargetRoot
+    }
+
+    if ($VSCodeWorkspaceRoot) {
+        $vscodeArgs["WorkspaceRoot"] = $VSCodeWorkspaceRoot
+    }
+
+    if ($DryRun) {
+        $vscodeArgs["DryRun"] = $true
+    }
+
+    & $vscodeInstaller @vscodeArgs
+}
 
 if ($DryRun) {
     Write-Host "Dry run complete."
