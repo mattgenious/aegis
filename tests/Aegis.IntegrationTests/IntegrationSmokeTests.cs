@@ -669,6 +669,79 @@ public class IntegrationSmokeTests
         }
     }
 
+    [Fact]
+    public async Task DirectOpenCodeCommandsResolveCellWrapperSessionIds()
+    {
+        const string messagesJson = """
+[
+  {"info":{"id":"msg_user","role":"user"},"parts":[{"id":"part_user","type":"text","text":"finish"}]},
+  {"info":{"id":"msg_assistant","role":"assistant"},"parts":[{"id":"part_assistant","type":"text","text":"FINAL HANDOFF\nwrapper resolved"}]}
+]
+""";
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        await using var server = await FakeOpenCodeServer.StartAsync(messagesJson);
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            Directory.CreateDirectory(workspace);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Wrapper resolve")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "OpenCode linked")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+            const string wrapperSessionId = "opencode-wrapper-test";
+
+            await RunCli(
+                workMapStore,
+                "cell",
+                "session",
+                "link",
+                "--cell",
+                missionId,
+                "--stream",
+                streamId,
+                "--session",
+                wrapperSessionId,
+                "--backend",
+                "opencode",
+                "--backend-session",
+                "ses_fake_opencode",
+                "--directory",
+                workspace);
+
+            var summary = await RunCli(
+                workMapStore,
+                "last-summary",
+                "--backend",
+                "opencode",
+                "--session",
+                wrapperSessionId,
+                "--server",
+                server.Url,
+                "--plain");
+            Assert.Contains("wrapper resolved", summary.Stdout);
+
+            var tail = await RunCli(
+                workMapStore,
+                "tail",
+                "--backend",
+                "opencode",
+                "--session",
+                wrapperSessionId,
+                "--server",
+                server.Url,
+                "--limit",
+                "5",
+                "--once");
+            Assert.Contains("wrapper resolved", tail.Stdout);
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, true);
+        }
+    }
+
     [Theory]
     [InlineData("[]", "no assistant message")]
     [InlineData("""[{"info":{"id":"msg_empty","role":"assistant"},"parts":[{"id":"part_empty","type":"text","text":""}]}]""", "text was empty")]

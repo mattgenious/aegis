@@ -273,10 +273,16 @@ internal static partial class Program
 
     private static string WithDirectory(string path, Options options)
     {
-        if (string.IsNullOrWhiteSpace(options.Directory)) return path;
+        return WithDirectory(path, options, null);
+    }
+
+    private static string WithDirectory(string path, Options options, string? recordedDirectory)
+    {
+        var directory = string.IsNullOrWhiteSpace(options.Directory) ? recordedDirectory : options.Directory;
+        if (string.IsNullOrWhiteSpace(directory)) return path;
 
         var separator = path.Contains('?') ? "&" : "?";
-        return path + separator + "directory=" + Uri.EscapeDataString(Path.GetFullPath(options.Directory));
+        return path + separator + "directory=" + Uri.EscapeDataString(Path.GetFullPath(directory));
     }
 
     private static async Task<int> Health(OpenCodeClient client)
@@ -1055,10 +1061,11 @@ internal static partial class Program
             return 0;
         }
 
-        var state = await GetSessionState(client, options.Session, options);
-        WriteJson(new JsonObject
+        var session = await ResolveOpenCodeSession(options.Session, options);
+        var state = await GetSessionState(client, session, options);
+        var payload = new JsonObject
         {
-            ["sessionID"] = options.Session,
+            ["sessionID"] = session.SessionId,
             ["status"] = state.EffectiveStatus,
             ["apiStatus"] = state.ApiStatus,
             ["derivedStatus"] = state.DerivedStatus,
@@ -1066,19 +1073,21 @@ internal static partial class Program
             ["latestUserMessageID"] = state.LatestUserMessageId,
             ["latestAssistantMessageID"] = state.LatestAssistantMessageId,
             ["hasFreshSummary"] = state.FreshSummary is not null
-        });
+        };
+        AddBackendSessionId(payload, session);
+        WriteJson(payload);
         return 0;
     }
 
     private static async Task<int> Wait(OpenCodeClient client, Options options)
     {
-        var session = Require(options.Session, "--session");
+        var session = await ResolveOpenCodeSession(Require(options.Session, "--session"), options);
         if (options.TimeoutWasProvided) throw new ArgumentException("wait does not accept --timeout. It passively waits until OpenCode reports the session is idle; press Ctrl+C to stop.");
 
         var state = await WaitPassivelyUntilIdle(client, session, options);
-        WriteJson(new JsonObject
+        var payload = new JsonObject
         {
-            ["sessionID"] = session,
+            ["sessionID"] = session.SessionId,
             ["status"] = state.EffectiveStatus,
             ["apiStatus"] = state.ApiStatus,
             ["derivedStatus"] = state.DerivedStatus,
@@ -1087,13 +1096,15 @@ internal static partial class Program
             ["latestUserMessageID"] = state.LatestUserMessageId,
             ["latestAssistantMessageID"] = state.LatestAssistantMessageId,
             ["hasFreshSummary"] = state.FreshSummary is not null
-        });
+        };
+        AddBackendSessionId(payload, session);
+        WriteJson(payload);
         return 0;
     }
 
     private static async Task<int> Messages(OpenCodeClient client, Options options)
     {
-        var session = Require(options.Session, "--session");
+        var session = await ResolveOpenCodeSession(Require(options.Session, "--session"), options);
         var limit = options.Limit > 0 ? options.Limit : 20;
         WriteJson(await GetMessages(client, session, options, limit));
         return 0;
@@ -1101,11 +1112,11 @@ internal static partial class Program
 
     private static async Task<int> LastSummary(OpenCodeClient client, Options options)
     {
-        var session = Require(options.Session, "--session");
+        var session = await ResolveOpenCodeSession(Require(options.Session, "--session"), options);
         var summary = await FindLastAssistantSummary(client, session, options);
         if (summary is null)
         {
-            return Fail($"No fresh assistant summary found for session {session} after the latest user prompt using marker '{options.SummaryMarker}'. Older historical handoffs are ignored.");
+            return Fail($"No fresh assistant summary found for session {session.SessionId} after the latest user prompt using marker '{options.SummaryMarker}'. Older historical handoffs are ignored.");
         }
 
         if (options.Plain)
@@ -1114,22 +1125,24 @@ internal static partial class Program
         }
         else
         {
-            WriteJson(new JsonObject
+            var payload = new JsonObject
             {
-                ["sessionID"] = session,
+                ["sessionID"] = session.SessionId,
                 ["summaryFreshAfterLatestPrompt"] = true,
                 ["messageID"] = summary.MessageId,
                 ["partID"] = summary.PartId,
                 ["summary"] = summary.Text
-            });
+            };
+            AddBackendSessionId(payload, session);
+            WriteJson(payload);
         }
         return 0;
     }
 
     private static async Task<int> Abort(OpenCodeClient client, Options options)
     {
-        var session = Require(options.Session, "--session");
-        var result = await client.PostEmpty($"session/{session}/abort");
+        var session = await ResolveOpenCodeSession(Require(options.Session, "--session"), options);
+        var result = await client.PostEmpty(WithDirectory($"session/{session.BackendSessionId}/abort", options, session.Directory));
         WriteJson(result);
         return 0;
     }
@@ -1168,7 +1181,7 @@ internal static partial class Program
 
     private static async Task<int> Tail(OpenCodeClient client, Options options)
     {
-        var session = Require(options.Session, "--session");
+        var session = await ResolveOpenCodeSession(Require(options.Session, "--session"), options);
         var limit = options.Limit > 0 ? options.Limit : 20;
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
@@ -1188,7 +1201,7 @@ internal static partial class Program
 
     private static async Task<int> Export(OpenCodeClient client, Options options)
     {
-        var session = Require(options.Session, "--session");
+        var session = await ResolveOpenCodeSession(Require(options.Session, "--session"), options);
         var limit = options.Limit > 0 ? options.Limit : 0;
         var messages = await GetMessages(client, session, options, limit);
         var status = await GetSessionStatus(client, session);
@@ -1198,7 +1211,7 @@ internal static partial class Program
         if (options.Format.Equals("md", StringComparison.OrdinalIgnoreCase) ||
             options.Format.Equals("markdown", StringComparison.OrdinalIgnoreCase))
         {
-            var markdown = BuildMarkdownExport(session, status, exportedAt, summary, messages);
+            var markdown = BuildMarkdownExport(session.SessionId, status, exportedAt, summary, messages);
             await WriteOrPrint(markdown, options);
             return 0;
         }
@@ -1210,7 +1223,7 @@ internal static partial class Program
 
         var output = new JsonObject
         {
-            ["sessionID"] = session,
+            ["sessionID"] = session.SessionId,
             ["status"] = status,
             ["exportedAt"] = exportedAt,
             ["summary"] = summary is null
@@ -1223,23 +1236,30 @@ internal static partial class Program
                 },
             ["messages"] = messages?.DeepClone()
         };
+        AddBackendSessionId(output, session);
         await WriteOrPrint(output.ToJsonString(JsonOptions), options);
         return 0;
     }
 
     private static async Task<int> Watch(OpenCodeClient client, Options options)
     {
-        var session = Require(options.Session, "--session");
+        var session = await ResolveOpenCodeSession(Require(options.Session, "--session"), options);
         return await WatchSessions(client, [session], options);
     }
 
     private static async Task<int> WatchMany(OpenCodeClient client, Options options)
     {
         if (options.Sessions.Count == 0) throw new ArgumentException("At least one --session is required.");
-        return await WatchSessions(client, options.Sessions, options);
+        var sessions = new List<ResolvedOpenCodeSession>();
+        foreach (var session in options.Sessions)
+        {
+            sessions.Add(await ResolveOpenCodeSession(session, options));
+        }
+
+        return await WatchSessions(client, sessions, options);
     }
 
-    private static async Task<int> WatchSessions(OpenCodeClient client, IReadOnlyList<string> sessions, Options options)
+    private static async Task<int> WatchSessions(OpenCodeClient client, IReadOnlyList<ResolvedOpenCodeSession> sessions, Options options)
     {
         var interval = TimeSpan.FromMinutes(options.IntervalMinutes);
         var maxRuns = options.MaxRuns ?? (options.Once ? 1 : null);
@@ -1261,14 +1281,14 @@ internal static partial class Program
             var anchors = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var session in sessions)
             {
-                anchors[session] = await SendWatchPrompt(client, session, options, prompt);
+                anchors[session.SessionId] = await SendWatchPrompt(client, session, options, prompt);
             }
 
             if (options.UntilIdle)
             {
                 foreach (var session in sessions)
                 {
-                    await PollUntilIdleAfterPrompt(client, session, options, RemainingTimeout(deadline, options), anchors[session]);
+                    await PollUntilIdleAfterPrompt(client, session, options, RemainingTimeout(deadline, options), anchors[session.SessionId]);
                 }
                 return 0;
             }
@@ -1283,20 +1303,20 @@ internal static partial class Program
         return 0;
     }
 
-    private static async Task<int> SendWatchPrompt(OpenCodeClient client, string session, Options options, string prompt)
+    private static async Task<int> SendWatchPrompt(OpenCodeClient client, ResolvedOpenCodeSession session, Options options, string prompt)
     {
         var body = RawPromptBody(prompt, options);
         var anchorIndex = options.DryRun ? -1 : await LatestMessageIndex(client, session, options);
 
         if (options.DryRun)
         {
-            Console.WriteLine($"[{Timestamp()}] DRY RUN: would send watch prompt to {session}.");
+            Console.WriteLine($"[{Timestamp()}] DRY RUN: would send watch prompt to {session.SessionId}.");
             Console.WriteLine(prompt);
             return anchorIndex;
         }
 
-        Console.WriteLine($"[{Timestamp()}] Sending watch prompt to {session}...");
-        await client.PostNoContent(WithDirectory($"session/{session}/prompt_async", options), body);
+        Console.WriteLine($"[{Timestamp()}] Sending watch prompt to {session.SessionId}...");
+        await client.PostNoContent(WithDirectory($"session/{session.BackendSessionId}/prompt_async", options, session.Directory), body);
         return anchorIndex;
     }
 
@@ -1372,9 +1392,9 @@ internal static partial class Program
         return PromptTemplates.Render("watch/default.md", new Dictionary<string, string>());
     }
 
-    private static async Task<SessionState> PollUntilIdleAfterPrompt(OpenCodeClient client, string session, Options options, TimeSpan timeout, int anchorIndex)
+    private static async Task<SessionState> PollUntilIdleAfterPrompt(OpenCodeClient client, ResolvedOpenCodeSession session, Options options, TimeSpan timeout, int anchorIndex)
     {
-        _ = await client.GetJson(WithDirectory($"session/{session}", options));
+        _ = await client.GetJson(WithDirectory($"session/{session.BackendSessionId}", options, session.Directory));
         var deadline = DateTimeOffset.UtcNow.Add(timeout);
         var observedNonIdle = false;
         while (DateTimeOffset.UtcNow < deadline)
@@ -1390,12 +1410,12 @@ internal static partial class Program
             await Task.Delay(1000);
         }
 
-        throw new TimeoutException($"Session {session} did not become idle within {timeout.TotalSeconds:N0}s. Inspect `tail`, `messages`, or `status` for in-progress work.");
+        throw new TimeoutException($"Session {session.SessionId} did not become idle within {timeout.TotalSeconds:N0}s. Inspect `tail`, `messages`, or `status` for in-progress work.");
     }
 
-    private static async Task<SessionState> WaitPassivelyUntilIdle(OpenCodeClient client, string session, Options options)
+    private static async Task<SessionState> WaitPassivelyUntilIdle(OpenCodeClient client, ResolvedOpenCodeSession session, Options options)
     {
-        _ = await client.GetJson(WithDirectory($"session/{session}", options));
+        _ = await client.GetJson(WithDirectory($"session/{session.BackendSessionId}", options, session.Directory));
         while (true)
         {
             var state = await GetSessionState(client, session, options);
@@ -1421,17 +1441,84 @@ internal static partial class Program
         throw new TimeoutException($"Session {session} did not produce a fresh final handoff after the latest prompt within {timeout.TotalSeconds:N0}s. Older historical handoffs were ignored; inspect `tail` or `messages` for in-progress work.");
     }
 
-    private static async Task<string?> GetSessionStatus(OpenCodeClient client, string session)
+    private static async Task<ResolvedOpenCodeSession> ResolveOpenCodeSession(string sessionId, Options options)
+    {
+        if (sessionId.StartsWith("ses_", StringComparison.Ordinal))
+        {
+            return new ResolvedOpenCodeSession(sessionId, sessionId, options.Directory);
+        }
+
+        var registry = new SessionRegistryService(new FileSessionRegistry());
+        var registered = await registry.TryGetAsync(sessionId);
+        if (registered is not null)
+        {
+            if (registered.Backend != BackendKind.Opencode)
+            {
+                throw new InvalidOperationException($"Session {sessionId} belongs to '{registered.Backend.ToOptionValue()}', not 'opencode'. Use --backend {registered.Backend.ToOptionValue()} or pass an OpenCode session.");
+            }
+
+            return new ResolvedOpenCodeSession(
+                registered.SessionId,
+                registered.BackendSessionId,
+                string.IsNullOrWhiteSpace(options.Directory) ? registered.Directory : options.Directory);
+        }
+
+        var cellSession = await new FileCellStore().GetAgentSessionAsync(sessionId);
+        if (cellSession is not null)
+        {
+            if (!BackendKindExtensions.TryParse(cellSession.Backend, out var backend) || backend != BackendKind.Opencode)
+            {
+                var backendName = string.IsNullOrWhiteSpace(cellSession.Backend) ? "unknown" : cellSession.Backend;
+                throw new InvalidOperationException($"Cell session {sessionId} belongs to '{backendName}', not 'opencode'. Use --backend {backendName} or pass an OpenCode session.");
+            }
+
+            if (string.IsNullOrWhiteSpace(cellSession.BackendSessionId))
+            {
+                throw new InvalidOperationException($"Cell session {sessionId} does not have an OpenCode backend session id yet.");
+            }
+
+            return new ResolvedOpenCodeSession(
+                cellSession.Id,
+                cellSession.BackendSessionId,
+                string.IsNullOrWhiteSpace(options.Directory) ? cellSession.Directory : options.Directory);
+        }
+
+        if (sessionId.StartsWith("opencode-", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnknownSessionException(sessionId);
+        }
+
+        return new ResolvedOpenCodeSession(sessionId, sessionId, options.Directory);
+    }
+
+    private static void AddBackendSessionId(JsonObject payload, ResolvedOpenCodeSession session)
+    {
+        if (!string.Equals(session.SessionId, session.BackendSessionId, StringComparison.Ordinal))
+        {
+            payload["backendSessionID"] = session.BackendSessionId;
+        }
+    }
+
+    private static ResolvedOpenCodeSession DirectOpenCodeSession(string session, Options options) =>
+        new(session, session, options.Directory);
+
+    private static Task<string?> GetSessionStatus(OpenCodeClient client, string session, Options options) =>
+        GetSessionStatus(client, DirectOpenCodeSession(session, options));
+
+    private static async Task<string?> GetSessionStatus(OpenCodeClient client, ResolvedOpenCodeSession session)
     {
         var map = await client.GetJson("session/status");
-        var node = map?[session];
+        var node = map?[session.BackendSessionId];
         if (node is null) return null;
         var type = node["type"]?.GetValue<string>();
         if (type == "retry") return $"retry:{node["message"]?.GetValue<string>()}";
         return type;
     }
 
-    private static async Task<SessionState> GetSessionState(OpenCodeClient client, string session, Options options, int? anchorIndex = null)
+    private static Task<SessionState> GetSessionState(OpenCodeClient client, string session, Options options, int? anchorIndex = null) =>
+        GetSessionState(client, DirectOpenCodeSession(session, options), options, anchorIndex);
+
+    private static async Task<SessionState> GetSessionState(OpenCodeClient client, ResolvedOpenCodeSession session, Options options, int? anchorIndex = null)
     {
         var messages = await GetMessages(client, session, options);
         var apiStatus = await GetSessionStatus(client, session);
@@ -1455,26 +1542,38 @@ internal static partial class Program
         return new SessionState(apiStatus, derivedStatus, effectiveStatus, messageCount, latestUser, latestAssistant, hasAssistantAfterAnchor, freshSummary);
     }
 
-    private static async Task<Summary?> FindLastAssistantSummary(OpenCodeClient client, string session, Options options)
+    private static Task<Summary?> FindLastAssistantSummary(OpenCodeClient client, string session, Options options) =>
+        FindLastAssistantSummary(client, DirectOpenCodeSession(session, options), options);
+
+    private static async Task<Summary?> FindLastAssistantSummary(OpenCodeClient client, ResolvedOpenCodeSession session, Options options)
     {
         var messages = await GetMessages(client, session, options);
         return FindLastAssistantSummary(messages, options.SummaryMarker, LatestUserMessageIndex(messages));
     }
 
-    private static async Task<Summary?> FindLastAssistantSummary(OpenCodeClient client, string session, Options options, int anchorIndex)
+    private static Task<Summary?> FindLastAssistantSummary(OpenCodeClient client, string session, Options options, int anchorIndex) =>
+        FindLastAssistantSummary(client, DirectOpenCodeSession(session, options), options, anchorIndex);
+
+    private static async Task<Summary?> FindLastAssistantSummary(OpenCodeClient client, ResolvedOpenCodeSession session, Options options, int anchorIndex)
     {
         var messages = await GetMessages(client, session, options);
         return FindLastAssistantSummary(messages, options.SummaryMarker, anchorIndex);
     }
 
-    private static Task<JsonNode?> GetMessages(OpenCodeClient client, string session, Options options, int limit = 0)
+    private static Task<JsonNode?> GetMessages(OpenCodeClient client, string session, Options options, int limit = 0) =>
+        GetMessages(client, DirectOpenCodeSession(session, options), options, limit);
+
+    private static Task<JsonNode?> GetMessages(OpenCodeClient client, ResolvedOpenCodeSession session, Options options, int limit = 0)
     {
-        var path = $"session/{session}/message";
+        var path = $"session/{session.BackendSessionId}/message";
         if (limit > 0) path += $"?limit={limit}";
-        return client.GetJson(WithDirectory(path, options));
+        return client.GetJson(WithDirectory(path, options, session.Directory));
     }
 
-    private static async Task<int> LatestMessageIndex(OpenCodeClient client, string session, Options options)
+    private static Task<int> LatestMessageIndex(OpenCodeClient client, string session, Options options) =>
+        LatestMessageIndex(client, DirectOpenCodeSession(session, options), options);
+
+    private static async Task<int> LatestMessageIndex(OpenCodeClient client, ResolvedOpenCodeSession session, Options options)
     {
         var messages = await GetMessages(client, session, options);
         return MessageCount(messages) - 1;
@@ -2336,6 +2435,8 @@ Examples:
 """);
 
     private sealed record Summary(string MessageId, string PartId, string Text);
+
+    private sealed record ResolvedOpenCodeSession(string SessionId, string BackendSessionId, string? Directory);
 
     private sealed record SessionState(
         string? ApiStatus,
