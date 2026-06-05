@@ -59,7 +59,7 @@ public sealed class CodexBackend : ISessionBackend
         var messagesPath = ResolveMessagesPath(session);
         await SaveStatusAsync(statusPath, "running", cancellationToken);
 
-        var prompt = request.Raw ? request.Text : BuildHarnessPrompt(request.Text, request.SummaryMarker);
+        var prompt = request.Raw ? request.Text : BuildDelegationPrompt(request.Text, request.SummaryMarker);
         var runDetached = IsDetachedRequest(request);
         var args = BuildExecArguments(request, session.Directory, runDetached ? "-" : prompt);
 
@@ -556,7 +556,7 @@ public sealed class CodexBackend : ISessionBackend
         return parsed?.ApiStatus ?? "idle";
     }
 
-    private static string BuildHarnessPrompt(string prompt, string marker)
+    private static string BuildDelegationPrompt(string prompt, string marker)
     {
         return PromptTemplates.Render("delegation/codex.md", new Dictionary<string, string>
         {

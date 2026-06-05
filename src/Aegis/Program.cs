@@ -1030,7 +1030,7 @@ internal static partial class Program
 
     private static JsonObject PromptBody(string prompt, Options options)
     {
-        var fullPrompt = options.Raw ? prompt : BuildHarnessPrompt(prompt, options);
+        var fullPrompt = options.Raw ? prompt : BuildDelegationPrompt(prompt, options);
         var body = new JsonObject
         {
             ["parts"] = new JsonArray(new JsonObject
@@ -1044,7 +1044,7 @@ internal static partial class Program
         return body;
     }
 
-    private static string BuildHarnessPrompt(string prompt, Options options)
+    private static string BuildDelegationPrompt(string prompt, Options options)
     {
         return PromptTemplates.Render("delegation/opencode.md", new Dictionary<string, string>
         {
@@ -2118,9 +2118,9 @@ Notes:
   the OpenCode GitHub Copilot provider, matching `aegis ask --model github-copilot/<model>`.
   Use --backend copilot without a github-copilot provider model for the standalone Copilot CLI
   backend.
-  The legacy `aegis cell` and `aegis work-map` command forms remain accepted
-  during migration; use `aegis cell` for new briefs, docs, and automation.
-  session link/update accept manual external backend labels for non-harness workers such as
+  The legacy `aegis work-map` command form remains accepted during migration;
+  use `aegis cell` for new briefs, docs, and automation.
+  session link/update accept manual external backend labels for non-Aegis workers such as
   shipper, background, human, or external coordinator sessions; sync skips those records.
   serve starts an optional read-only React observer UI over the same records and logs each
   request to stderr. Pass --access-log FILE to append durable JSONL access records.
