@@ -25,7 +25,7 @@
 - **opencode** uses HTTP API polling and preserves existing session semantics.
 - **codex** uses direct local process execution; cancellation is explicit no-op with guidance.
 - **pi** uses JSON event stream mode and emits parser-friendly status/message guidance.
-- **copilot** uses one blocking non-interactive `copilot --prompt` process per prompt, captures JSON/JSONL/plain text output into harness state, and rejects `--async` until a detached/resumable flow is implemented and live validated.
+- **copilot** uses one blocking non-interactive `copilot --prompt` process per prompt, captures JSON/JSONL/plain text output into backend state, and rejects `--async` until a detached/resumable flow is implemented and live validated.
 
 ## Notes for next backends
 

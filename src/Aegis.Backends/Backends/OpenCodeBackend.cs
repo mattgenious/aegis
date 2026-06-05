@@ -140,7 +140,7 @@ public sealed class OpencodeBackend : ISessionBackend
 
     private static JsonObject BuildPromptBody(PromptRequest request)
     {
-        var fullPrompt = request.Raw ? request.Text : BuildHarnessPrompt(request.Text, request.SummaryMarker);
+        var fullPrompt = request.Raw ? request.Text : BuildDelegationPrompt(request.Text, request.SummaryMarker);
         var body = new JsonObject
         {
             ["parts"] = new JsonArray(new JsonObject
@@ -154,7 +154,7 @@ public sealed class OpencodeBackend : ISessionBackend
         return body;
     }
 
-    private static string BuildHarnessPrompt(string prompt, string marker)
+    private static string BuildDelegationPrompt(string prompt, string marker)
     {
         return PromptTemplates.Render("delegation/opencode.md", new Dictionary<string, string>
         {

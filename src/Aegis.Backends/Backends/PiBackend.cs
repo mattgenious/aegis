@@ -55,7 +55,7 @@ public sealed class PiBackend : ISessionBackend
         var messagesPath = ResolveMessagesPath(session);
         await SaveStatusAsync(statusPath, "running", cancellationToken);
 
-        var prompt = request.Raw ? request.Text : BuildHarnessPrompt(request.Text, request.SummaryMarker);
+        var prompt = request.Raw ? request.Text : BuildDelegationPrompt(request.Text, request.SummaryMarker);
         var args = new List<string>
         {
             "--mode",
@@ -142,7 +142,7 @@ public sealed class PiBackend : ISessionBackend
         }
     }
 
-    private static string BuildHarnessPrompt(string prompt, string marker)
+    private static string BuildDelegationPrompt(string prompt, string marker)
     {
         return PromptTemplates.Render("delegation/pi.md", new Dictionary<string, string>
         {

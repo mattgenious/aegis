@@ -10,7 +10,7 @@
     <Authors>mattgenious</Authors>
     <Description>Reusable contracts, session registry infrastructure, state normalization, prompt rendering, and cell records for Aegis agent backends.</Description>
     <RepositoryUrl>https://github.com/mattgenious/aegis</RepositoryUrl>
-    <PackageTags>agents;cli;harness;automation</PackageTags>
+    <PackageTags>agents;cli;aegis;automation</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
