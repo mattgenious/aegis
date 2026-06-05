@@ -13,6 +13,7 @@ Aegis is a small .NET helper for deterministic delegated agent sessions and dura
 - `tests/Aegis.UnitTests/`: unit tests.
 - `tests/Aegis.IntegrationTests/`: integration tests.
 - `prompts/`: markdown source files for built-in agent prompts.
+- `scripts/install-aegis.ps1`: standalone installer for publishing Aegis from this repo.
 
 Conventions and coding standards are documented in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
@@ -35,7 +36,15 @@ Library/package consumption notes for in-process callers are in [docs/package-co
 
 ## Install And Compatibility
 
-The workspace installer publishes versioned `aegis.exe` builds under `$HOME\.local\aegis\versions` and installs a primary PATH shim at `$HOME\.local\aegis\bin\aegis.cmd`.
+Aegis can be installed directly from this repository:
+
+```powershell
+powershell -File scripts/install-aegis.ps1
+```
+
+The standalone installer publishes versioned `aegis.exe` builds under `$HOME\.local\aegis\versions`, installs a primary PATH shim at `$HOME\.local\aegis\bin\aegis.cmd`, updates the active marker, and prunes old versions by default. Use `-DryRun` to preview and `-InstallRoot <path>` to target a different install directory.
+
+The broader workspace/client installer in `agent-plugins` can also publish Aegis while installing editor/client integrations for OpenCode, VS Code, Codex, and GitHub Copilot CLI.
 
 Compatibility aliases:
 
@@ -108,7 +117,7 @@ Create a cell, attach clone-backed workstreams, fork child cells when a worker n
 
 ```powershell
 aegis cell create --title "Ship search fixes" --intent "Coordinate independent repo slices"
-aegis cell stream add --cell cell-... --name "API slice" --role implementer --clone E:\agents\workspaces\api-search-fix
+aegis cell stream add --cell cell-... --name "API slice" --role implementer --clone C:\workspaces\api-search-fix
 aegis cell fork --cell cell-... --title "Search indexing slice" --intent "Let a worker recursively split indexing work"
 aegis cell launch --cell cell-... --backend codex --prompt-file worker-context.md
 aegis cell session run --cell cell-... --stream stream-... --backend copilot --prompt-file worker-context.md
