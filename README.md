@@ -13,7 +13,9 @@ Aegis is a small .NET helper for deterministic delegated agent sessions and dura
 - `tests/Aegis.UnitTests/`: unit tests.
 - `tests/Aegis.IntegrationTests/`: integration tests.
 - `prompts/`: markdown source files for built-in agent prompts.
+- `support/vscode/`: Aegis-owned VS Code Copilot Chat agent, instruction, and prompt templates.
 - `scripts/install-aegis.ps1`: standalone installer for publishing Aegis from this repo.
+- `scripts/install-vscode.ps1` and `scripts/install-vscode.sh`: standalone installers for Aegis VS Code support templates.
 
 Conventions and coding standards are documented in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
@@ -39,12 +41,27 @@ Library/package consumption notes for in-process callers are in [docs/package-co
 Aegis can be installed directly from this repository:
 
 ```powershell
+git clone https://github.com/mattgenious/aegis.git
+cd aegis
 powershell -File scripts/install-aegis.ps1
 ```
 
 The standalone installer publishes versioned `aegis.exe` builds under `$HOME\.local\aegis\versions`, installs a primary PATH shim at `$HOME\.local\aegis\bin\aegis.cmd`, updates the active marker, and prunes old versions by default. Use `-DryRun` to preview and `-InstallRoot <path>` to target a different install directory.
 
-The broader workspace/client installer in `agent-plugins` can also publish Aegis while installing editor/client integrations for OpenCode, VS Code, Codex, and GitHub Copilot CLI.
+To install the Aegis-owned VS Code Copilot Chat support templates from this repo, run one of:
+
+```powershell
+powershell -File scripts/install-vscode.ps1
+powershell -File scripts/install-aegis.ps1 -InstallVSCodeSupport
+```
+
+```sh
+sh scripts/install-vscode.sh
+```
+
+The VS Code support installer copies only the Aegis templates from `support/vscode/` into `$HOME/.copilot/agents`, `$HOME/.copilot/instructions`, and `$HOME/.copilot/prompts`. Use `-DryRun` on PowerShell or `--dry-run` on POSIX shells to preview. Use `-TargetRoot <path>` / `--target-root <path>` or `-ProfileRoot <path>` / `--profile-root <path>` to install into a test directory or a non-default Copilot profile root. Use `-WorkspaceRoot <path>` / `--workspace-root <path>` to also install workspace-scoped copies under `.github/`.
+
+VS Code support is terminal/tool based: Aegis can be launched from VS Code and can spawn or supervise external backend sessions through OpenCode, Codex, GitHub Copilot CLI, or other supported Aegis backends. It does not drive VS Code's native Copilot Chat UI as a backend session host.
 
 Compatibility aliases:
 
