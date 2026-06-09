@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
@@ -12,6 +13,7 @@ public sealed class CopilotBackend : ISessionBackend
     private const string MessageLineSuffix = ".messages.jsonl";
     private const string StatusSuffix = ".status.json";
     private const string ShareSuffix = ".share.md";
+    private const string CopilotSessionMetadataKey = "copilot.sessionId";
 
     private readonly string _copilotBinary;
     private readonly string? _stateRoot;
@@ -30,13 +32,14 @@ public sealed class CopilotBackend : ISessionBackend
 
     public async Task<SessionRecord> CreateSessionAsync(CreateSessionRequest request, CancellationToken cancellationToken = default)
     {
-        var backendSessionId = $"copilot-{Guid.NewGuid():N}";
+        var copilotSessionId = Guid.NewGuid().ToString("D");
+        var backendSessionId = $"copilot-{copilotSessionId}";
         var statePath = ResolveSessionPath(backendSessionId, request.Directory);
         var statusPath = statePath + StatusSuffix;
         var messagesPath = statePath + MessageLineSuffix;
 
         Directory.CreateDirectory(Path.GetDirectoryName(statusPath)!);
-        await SaveStatusAsync(statusPath, "idle", cancellationToken);
+        await SaveStatusAsync(statusPath, "idle", cancellationToken, copilotSessionId);
         await File.WriteAllTextAsync(messagesPath, "[]", cancellationToken);
 
         return new SessionRecord(
@@ -46,21 +49,25 @@ public sealed class CopilotBackend : ISessionBackend
             CreatedAtUtc: DateTimeOffset.UtcNow,
             Directory: request.Directory,
             BackendMetadataPath: statePath,
-            Metadata: null);
+            Metadata: ImmutableDictionary<string, string>.Empty.Add(CopilotSessionMetadataKey, copilotSessionId));
     }
 
     public async Task<CommandResult> PostPromptAsync(SessionRecord session, PromptRequest request, CancellationToken cancellationToken = default)
     {
         var statusPath = ResolveStatusPath(session);
         var messagesPath = ResolveMessagesPath(session);
-        await SaveStatusAsync(statusPath, "running", cancellationToken);
+        var copilotSessionId = ResolveCopilotSessionId(session);
+        await SaveStatusAsync(statusPath, "running", cancellationToken, copilotSessionId);
 
         if (request.Options.TryGetValue("harness.async", out var asyncValue)
             && bool.TryParse(asyncValue, out var isAsync)
             && isAsync)
         {
-            await SaveStatusAsync(statusPath, "error:async-not-supported", cancellationToken);
-            return CommandResult.Failure(1, "Copilot backend does not support --async yet; run without --async/--wait for a blocking one-shot prompt.");
+            await SaveStatusAsync(statusPath, "error:async-not-supported", cancellationToken, copilotSessionId);
+            return CommandResult.Failure(
+                1,
+                "Copilot backend does not support --async for non-interactive prompts yet.",
+                "GitHub Copilot CLI remote control currently requires a long-running interactive local CLI session and is not available in --prompt mode. Run without --async for a blocking prompt, or use OpenCode/subagents until Aegis has an interactive Copilot process supervisor.");
         }
 
         if (request.NoReply)
@@ -74,7 +81,7 @@ public sealed class CopilotBackend : ISessionBackend
                     NewPartId("user"),
                     DateTimeOffset.UtcNow)
             ], cancellationToken);
-            await SaveStatusAsync(statusPath, "idle", cancellationToken);
+            await SaveStatusAsync(statusPath, "idle", cancellationToken, copilotSessionId);
             return CommandResult.Success("Prompt recorded without calling Copilot because --no-reply was set.");
         }
 
@@ -96,33 +103,40 @@ public sealed class CopilotBackend : ISessionBackend
             var exitCode = process.ExitCode;
 
             var stdout = await stdoutTask;
-            var messages = CopilotMessageParser.Parse(stdout);
+            var parseResult = CopilotMessageParser.ParseTranscript(stdout);
+            var messages = parseResult.Messages;
             if (messages.Count == 0 && !string.IsNullOrWhiteSpace(stdout))
             {
                 messages.Add(new CopilotStoredMessage(NewMessageId("assistant"), "assistant", stdout.Trim(), NewPartId("assistant"), DateTimeOffset.UtcNow));
             }
 
-            messages.Insert(0, new CopilotStoredMessage(NewMessageId("user"), "user", request.Text, NewPartId("user"), DateTimeOffset.UtcNow));
-            await PersistMessagesAsync(messagesPath, messages, cancellationToken);
-
-            if (exitCode != 0)
+            if (!messages.Any(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase)))
             {
-                var errorText = await stderrTask;
-                await SaveStatusAsync(statusPath, $"error:{exitCode}", cancellationToken);
-                return CommandResult.Failure(exitCode, "copilot command failed", ComposeFailureGuidance(errorText));
+                messages.Insert(0, new CopilotStoredMessage(NewMessageId("user"), "user", request.Text, NewPartId("user"), DateTimeOffset.UtcNow));
             }
 
-            await SaveStatusAsync(statusPath, "idle", cancellationToken);
+            await PersistMessagesAsync(messagesPath, messages, cancellationToken);
+            var emittedSessionId = parseResult.SessionId ?? copilotSessionId;
+            var effectiveExitCode = parseResult.ExitCode ?? exitCode;
+
+            if (effectiveExitCode != 0)
+            {
+                var errorText = await stderrTask;
+                await SaveStatusAsync(statusPath, $"error:{effectiveExitCode}", cancellationToken, emittedSessionId, effectiveExitCode);
+                return CommandResult.Failure(effectiveExitCode, "copilot command failed", ComposeFailureGuidance(errorText, effectiveExitCode));
+            }
+
+            await SaveStatusAsync(statusPath, "idle", cancellationToken, emittedSessionId, effectiveExitCode);
             return CommandResult.Success();
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 2)
         {
-            await SaveStatusAsync(statusPath, "error:copilot-not-found", cancellationToken);
+            await SaveStatusAsync(statusPath, "error:copilot-not-found", cancellationToken, copilotSessionId);
             return CommandResult.Failure(127, "copilot executable not found on PATH", "Install GitHub Copilot CLI, authenticate with `copilot login`, or set COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN for headless runs.");
         }
         catch (OperationCanceledException)
         {
-            await SaveStatusAsync(statusPath, "error:aborted", CancellationToken.None);
+            await SaveStatusAsync(statusPath, "error:aborted", CancellationToken.None, copilotSessionId);
             return CommandResult.Failure(124, "copilot execution was cancelled");
         }
     }
@@ -208,7 +222,7 @@ public sealed class CopilotBackend : ISessionBackend
 
     public async Task<CommandResult> AbortAsync(SessionRecord session, CancellationToken cancellationToken = default)
     {
-        await SaveStatusAsync(ResolveStatusPath(session), "error:abort-not-supported", cancellationToken);
+        await SaveStatusAsync(ResolveStatusPath(session), "error:abort-not-supported", cancellationToken, ResolveCopilotSessionId(session));
         return CommandResult.Failure(1, "Copilot backend runs one non-interactive process per prompt and does not currently expose a cancellable async session handle.");
     }
 
@@ -239,12 +253,20 @@ public sealed class CopilotBackend : ISessionBackend
         {
             "--prompt",
             prompt,
-            "--output-format=json",
+            "--output-format",
+            "json",
+            "--no-remote",
             "--stream=off",
             "--no-ask-user",
             "--share",
             (session.BackendMetadataPath ?? ResolveSessionPath(session.BackendSessionId, session.Directory)) + ShareSuffix
         };
+
+        var copilotSessionId = ResolveCopilotSessionId(session);
+        if (!string.IsNullOrWhiteSpace(copilotSessionId))
+        {
+            args.AddRange(["--session-id", copilotSessionId]);
+        }
 
         if (!string.IsNullOrWhiteSpace(request.Model))
         {
@@ -254,6 +276,11 @@ public sealed class CopilotBackend : ISessionBackend
         if (!string.IsNullOrWhiteSpace(request.Agent))
         {
             args.AddRange(["--agent", request.Agent]);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Variant))
+        {
+            args.AddRange(["--reasoning-effort", request.Variant]);
         }
 
         foreach (var allow in ReadRepeatedOption(request, "copilot.allowTool"))
@@ -306,10 +333,15 @@ public sealed class CopilotBackend : ISessionBackend
         await File.WriteAllTextAsync(messagesPath, JsonSerializer.Serialize(existing, _jsonOptions), cancellationToken);
     }
 
-    private static async Task SaveStatusAsync(string statusPath, string status, CancellationToken cancellationToken)
+    private static async Task SaveStatusAsync(
+        string statusPath,
+        string status,
+        CancellationToken cancellationToken,
+        string? copilotSessionId = null,
+        int? exitCode = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(statusPath)!);
-        await File.WriteAllTextAsync(statusPath, JsonSerializer.Serialize(new CopilotStatus(status, DateTimeOffset.UtcNow)), cancellationToken);
+        await File.WriteAllTextAsync(statusPath, JsonSerializer.Serialize(new CopilotStatus(status, DateTimeOffset.UtcNow, copilotSessionId, exitCode)), cancellationToken);
     }
 
     private static async Task<string> ReadStatusAsync(string statusPath, CancellationToken cancellationToken)
@@ -388,11 +420,37 @@ public sealed class CopilotBackend : ISessionBackend
         return null;
     }
 
-    private static string ComposeFailureGuidance(string? stderr)
+    private static string ComposeFailureGuidance(string? stderr, int exitCode)
     {
-        return string.IsNullOrWhiteSpace(stderr)
-            ? "copilot returned no actionable error output. Verify authentication with `copilot login` or COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN."
-            : stderr;
+        if (!string.IsNullOrWhiteSpace(stderr)) return stderr;
+        return exitCode == 9009
+            ? "copilot returned exit code 9009 with no stderr. On Windows this usually means the command launch path was not found; verify `copilot` is on PATH or set AEGIS_COPILOT_BINARY to the full copilot.cmd/copilot.exe path."
+            : "copilot returned no actionable error output. Verify authentication with `copilot login` or COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN.";
+    }
+
+    private static string? ResolveCopilotSessionId(SessionRecord session)
+    {
+        if (session.Metadata.TryGetValue(CopilotSessionMetadataKey, out var metadataSessionId)
+            && TryNormalizeGuid(metadataSessionId, out var parsedMetadataSessionId))
+        {
+            return parsedMetadataSessionId;
+        }
+
+        var backendSessionId = session.BackendSessionId;
+        if (backendSessionId.StartsWith("copilot-", StringComparison.OrdinalIgnoreCase))
+        {
+            backendSessionId = backendSessionId["copilot-".Length..];
+        }
+
+        return TryNormalizeGuid(backendSessionId, out var parsedBackendSessionId) ? parsedBackendSessionId : null;
+    }
+
+    private static bool TryNormalizeGuid(string? value, out string normalized)
+    {
+        normalized = string.Empty;
+        if (!Guid.TryParse(value, out var parsed)) return false;
+        normalized = parsed.ToString("D");
+        return true;
     }
 
     private static string NewMessageId(string role) => $"copilot_{role}_{Guid.NewGuid():N}";
