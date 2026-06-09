@@ -252,7 +252,7 @@ internal static partial class Program
     {
         Console.WriteLine($"Preferred backend: {report.PreferredBackend ?? "none"}");
         Console.WriteLine("Selection order: " + string.Join(" -> ", report.SelectionOrder));
-        Console.WriteLine();
+        Console.WriteLine("Backends:");
         foreach (var backend in report.Backends)
         {
             Console.WriteLine($"{backend.Rank}. {backend.Backend}: {(backend.Available ? "available" : "missing")}");
