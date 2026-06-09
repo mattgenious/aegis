@@ -14,3 +14,5 @@ node_modules/
 # Runtime artifacts
 *.log
 *.tmp
+graphify-out/*
+!graphify-out/graph.json
