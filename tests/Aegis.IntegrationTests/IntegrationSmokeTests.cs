@@ -34,7 +34,7 @@ public class IntegrationSmokeTests
             var linkedStreamId = linkedStream["id"]!.GetValue<string>();
             await RunCli(tempRoot, "cell", "session", "link", "--cell", missionId, "--stream", linkedStreamId, "--session", "codex-existing", "--backend", "codex");
 
-            var launch = JsonNode.Parse((await RunCli(tempRoot, "cell", "launch", "--cell", missionId, "--dry-run")).Stdout)!;
+            var launch = JsonNode.Parse((await RunCli(tempRoot, "cell", "launch", "--cell", missionId, "--dry-run", "--backend", "codex")).Stdout)!;
 
             Assert.Equal("codex", launch["backend"]!.GetValue<string>());
             Assert.True(launch["dryRun"]!.GetValue<bool>());
@@ -48,6 +48,121 @@ public class IntegrationSmokeTests
             if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true);
         }
     }
+
+    [Fact]
+    public async Task CellLaunchDryRunAutoSelectsDetectedBackend()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var fakeBin = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempRoot);
+            Directory.CreateDirectory(fakeBin);
+            CreateFakeCommand(fakeBin, "opencode");
+
+            var mission = JsonNode.Parse((await RunCli(tempRoot, "cell", "create", "--title", "Auto backend")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            await RunCli(tempRoot, "cell", "stream", "add", "--cell", missionId, "--name", "Auto slice", "--status", "planned");
+
+            var launch = JsonNode.Parse((await RunCli(
+                tempRoot,
+                ConfigureBackendDetectionPath(fakeBin),
+                "cell",
+                "launch",
+                "--cell",
+                missionId,
+                "--dry-run")).Stdout)!;
+
+            Assert.Equal("opencode", launch["backend"]!.GetValue<string>());
+            Assert.Equal("opencode", launch["launched"]!.AsArray()[0]!["backend"]!.GetValue<string>());
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true);
+            if (Directory.Exists(fakeBin)) Directory.Delete(fakeBin, true);
+        }
+    }
+
+    [Fact]
+    public async Task CellSessionRunRejectsAsyncForBlockingBackends()
+    {
+        var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(workMapStore);
+            var mission = JsonNode.Parse((await RunCli(workMapStore, "cell", "create", "--title", "Blocking async")).Stdout)!;
+            var missionId = mission["id"]!.GetValue<string>();
+            var stream = JsonNode.Parse((await RunCli(workMapStore, "cell", "stream", "add", "--cell", missionId, "--name", "Pi slice")).Stdout)!;
+            var streamId = stream["id"]!.GetValue<string>();
+
+            var result = await RunCliAllowFailure(
+                workMapStore,
+                "cell",
+                "session",
+                "run",
+                "--cell",
+                missionId,
+                "--stream",
+                streamId,
+                "--backend",
+                "pi",
+                "--async",
+                "--prompt",
+                "should not start pi");
+
+            Assert.Equal(1, result.ExitCode);
+            Assert.Contains("pi backend does not support --async yet", result.Stderr);
+        }
+        finally
+        {
+            if (Directory.Exists(workMapStore)) Directory.Delete(workMapStore, true);
+        }
+    }
+
+    [Fact]
+    public async Task BackendDetectReportsPreferredAvailableBackend()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var fakeBin = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempRoot);
+            Directory.CreateDirectory(fakeBin);
+            CreateFakeCommand(fakeBin, "opencode");
+            CreateFakeCommand(fakeBin, "copilot");
+
+            var result = await RunCli(
+                tempRoot,
+                ConfigureBackendDetectionPath(fakeBin),
+                "backend",
+                "detect");
+
+            var output = JsonNode.Parse(result.Stdout)!;
+            Assert.Equal("opencode", output["preferredBackend"]!.GetValue<string>());
+            Assert.Equal("codex", output["selectionOrder"]!.AsArray()[0]!.GetValue<string>());
+            Assert.Equal("opencode", output["selectionOrder"]!.AsArray()[1]!.GetValue<string>());
+            Assert.Contains(output["backends"]!.AsArray(), backend =>
+                backend!["backend"]!.GetValue<string>() == "copilot"
+                && backend["available"]!.GetValue<bool>()
+                && backend["launchMode"]!.GetValue<string>() == "blocking");
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true);
+            if (Directory.Exists(fakeBin)) Directory.Delete(fakeBin, true);
+        }
+    }
+
+    private static Action<ProcessStartInfo> ConfigureBackendDetectionPath(string fakeBin) =>
+        startInfo =>
+        {
+            startInfo.Environment["PATH"] = fakeBin;
+            startInfo.Environment["PATHEXT"] = ".COM;.EXE;.BAT;.CMD";
+            startInfo.Environment.Remove("AEGIS_CODEX_BINARY");
+            startInfo.Environment.Remove("HARNESS_CLI_CODEX_BINARY");
+            startInfo.Environment.Remove("AEGIS_COPILOT_BINARY");
+            startInfo.Environment.Remove("HARNESS_CLI_COPILOT_BINARY");
+        };
 
     [Fact]
     public async Task CellStoreExportsAndImportsPortableSnapshot()
@@ -1215,6 +1330,23 @@ public class IntegrationSmokeTests
             | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
             | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         return argsPath;
+    }
+
+    private static void CreateFakeCommand(string fakeBin, string command)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(Path.Combine(fakeBin, command + ".cmd"), "@echo off\r\nexit /b 0\r\n");
+            return;
+        }
+
+        var executablePath = Path.Combine(fakeBin, command);
+        File.WriteAllText(executablePath, "#!/bin/sh\nexit 0\n");
+        File.SetUnixFileMode(
+            executablePath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
     }
 
     private static async Task<JsonNode> WaitForMissionSession(string workMapStore, string missionId, Process process)
