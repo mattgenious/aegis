@@ -87,6 +87,39 @@ public class CopilotBackendTests
     }
 
     [Fact]
+    public async Task PostPromptParsesCurrentCopilotJsonlEventsAndStatusMetadata()
+    {
+        await WithTempDirs(async (tempDir, stateRoot) =>
+        {
+            var emittedSessionId = Guid.NewGuid().ToString("D");
+            var output = string.Join('\n',
+            [
+                "{\"type\":\"user.message\",\"data\":{\"content\":\"Run a quick check\"}}",
+                "{\"type\":\"assistant.message_delta\",\"data\":{\"deltaContent\":\"partial\"}}",
+                "{\"type\":\"assistant.message_delta\",\"data\":{\"deltaContent\":\" ignored\"}}",
+                "{\"type\":\"assistant.message\",\"data\":{\"content\":\"FINAL HANDOFF\\nParsed current Copilot JSONL.\"}}",
+                "{\"type\":\"result\",\"sessionId\":\"" + emittedSessionId + "\",\"exitCode\":0}"
+            ]);
+            var backend = new CopilotBackend(await WriteFakeCopilotAsync(tempDir, output), stateRoot);
+            var session = await backend.CreateSessionAsync(new CreateSessionRequest("copilot-current-jsonl-session", null, tempDir));
+
+            var result = await backend.PostPromptAsync(session, RawPrompt());
+            var messages = await backend.GetMessagesAsync(session);
+            var summary = await backend.ExtractSummaryAsync(session, "FINAL HANDOFF");
+            using var status = JsonDocument.Parse(await File.ReadAllTextAsync(session.BackendMetadataPath + ".status.json"));
+
+            Assert.True(result.IsSuccess, result.Error ?? result.Message);
+            Assert.Single(messages, message => message.Role == "user");
+            Assert.Contains(messages, message => message.Role == "user" && message.Text == "Run a quick check");
+            Assert.DoesNotContain(messages, message => message.Role == "assistant" && message.Text.Contains("partial", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(summary);
+            Assert.Equal("Parsed current Copilot JSONL.", summary!.Text);
+            Assert.Equal(emittedSessionId, status.RootElement.GetProperty("CopilotSessionId").GetString());
+            Assert.Equal(0, status.RootElement.GetProperty("ExitCode").GetInt32());
+        });
+    }
+
+    [Fact]
     public async Task PostPromptFallsBackToPlainTextOutput()
     {
         await WithTempDirs(async (tempDir, stateRoot) =>
@@ -112,6 +145,9 @@ public class CopilotBackendTests
             var session = await backend.CreateSessionAsync(new CreateSessionRequest("copilot-permissions-session", null, tempDir));
             var request = RawPrompt() with
             {
+                Model = "gpt-5.4-mini",
+                Agent = "general-purpose",
+                Variant = "none",
                 Options = ImmutableDictionary<string, string>.Empty
                     .Add("copilot.allowTool", "Edit;Bash")
                     .Add("copilot.allowUrl", "https://github.com;https://docs.github.com")
@@ -122,7 +158,19 @@ public class CopilotBackendTests
             var args = await File.ReadAllTextAsync(argsPath);
 
             Assert.True(result.IsSuccess, result.Error ?? result.Message);
+            Assert.True(session.Metadata.TryGetValue("copilot.sessionId", out var copilotSessionId));
+            Assert.True(Guid.TryParse(copilotSessionId, out _));
             Assert.Contains("--prompt", args);
+            Assert.Contains("--output-format json", args);
+            Assert.Contains("--no-remote", args);
+            Assert.Contains("--session-id", args);
+            Assert.Contains(copilotSessionId, args);
+            Assert.Contains("--model", args);
+            Assert.Contains("gpt-5.4-mini", args);
+            Assert.Contains("--agent", args);
+            Assert.Contains("general-purpose", args);
+            Assert.Contains("--reasoning-effort", args);
+            Assert.Contains("none", args);
             Assert.Contains("Edit", args);
             Assert.Contains("Bash", args);
             Assert.Contains("--allow-url", args);
@@ -149,6 +197,7 @@ public class CopilotBackendTests
 
             Assert.False(result.IsSuccess);
             Assert.Contains("does not support --async", result.Message);
+            Assert.Contains("interactive local CLI session", result.Error);
             Assert.False(File.Exists(argsPath));
         });
     }
@@ -175,6 +224,7 @@ public class CopilotBackendTests
 
             Assert.False(result.PostResult.IsSuccess);
             Assert.Contains("does not support --async", result.PostResult.Message);
+            Assert.Contains("interactive local CLI session", result.PostResult.Error);
             Assert.False(File.Exists(argsPath));
         });
     }
