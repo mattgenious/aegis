@@ -34,6 +34,14 @@ The CLI targets .NET 10 to match the repo test projects and current agent workst
 
 Live backend verification is documented in [docs/live-backend-smoke.md](./docs/live-backend-smoke.md). Backend support is considered verified only after a real `ask` reaches the backend and extracts a fresh `FINAL HANDOFF`.
 
+Before choosing a delegated backend, run:
+
+```powershell
+aegis backend detect
+```
+
+Aegis reports local command availability in this priority order: Codex, OpenCode, Pi, then standalone GitHub Copilot CLI. Detection checks the local command surface only; authentication, model access, and OpenCode server health still require a live backend smoke. Cell launch/session-run uses the first available backend in that order only when no backend/profile/model controls are provided; explicit `--backend` always wins.
+
 Library/package consumption notes for in-process callers are in [docs/package-consumption.md](./docs/package-consumption.md).
 
 ## Install And Compatibility

@@ -1230,7 +1230,7 @@ internal static partial class Program
                     options,
                     resolved,
                     prompt,
-                    async: resolved.Backend != BackendKind.Copilot,
+                    async: BackendAvailabilityDetector.SupportsDetachedAsync(resolved.Backend),
                     wait: options.Wait);
                 sessions.Add(outcome.Session);
                 if (outcome.Blocker is not null)
@@ -2061,7 +2061,10 @@ internal static partial class Program
             backend = ParseBackend(options.Backend);
         }
 
-        var resolved = new AgentProfileResolver(DefaultAgentConfiguration with { DefaultBackend = BackendKind.Codex }).Resolve(
+        var defaultBackend = options.ShouldAutoSelectBackend
+            ? BackendAvailabilityDetector.PreferredAvailableBackend() ?? BackendKind.Codex
+            : BackendKind.Codex;
+        var resolved = new AgentProfileResolver(DefaultAgentConfiguration with { DefaultBackend = defaultBackend }).Resolve(
             new AgentProfileSelection
             {
                 Profile = options.Profile,
@@ -2096,8 +2099,8 @@ internal static partial class Program
 
     private static string? ValidateCellSessionRun(ResolvedAgentProfile resolved, CellArgs options)
     {
-        return resolved.Backend == BackendKind.Copilot && options.Async
-            ? "Copilot backend does not support --async yet; run without --async/--wait for a blocking one-shot prompt."
+        return options.Async && !BackendAvailabilityDetector.SupportsDetachedAsync(resolved.Backend)
+            ? $"{resolved.Backend.ToOptionValue()} backend does not support --async yet; run without --async/--wait for a blocking one-shot prompt."
             : null;
     }
 
@@ -2794,6 +2797,8 @@ internal static partial class Program
 
         public string? Backend { get; private set; }
 
+        public bool BackendWasProvided { get; private set; }
+
         public string? BackendSessionId { get; private set; }
 
         public string? Provider { get; private set; }
@@ -2876,6 +2881,14 @@ internal static partial class Program
 
         public bool TimeoutWasProvided { get; private set; }
 
+        public bool ShouldAutoSelectBackend =>
+            !BackendWasProvided
+            && string.IsNullOrWhiteSpace(Profile)
+            && string.IsNullOrWhiteSpace(Model)
+            && string.IsNullOrWhiteSpace(Variant)
+            && string.IsNullOrWhiteSpace(Agent)
+            && string.IsNullOrWhiteSpace(System);
+
         public int MessageLimit { get; private set; } = 50;
 
         public int? Port { get; private set; }
@@ -2916,8 +2929,8 @@ internal static partial class Program
                     case "--copilot-allow-url": parsed.CopilotAllowUrls.Add(Value(queue, arg)); break;
                     case "--integration-action": parsed.IntegrationAction = Value(queue, arg); break;
                     case "--display-name": parsed.DisplayName = Value(queue, arg); break;
-                    case "--backend": parsed.Backend = Value(queue, arg); break;
-                    case "--engine": parsed.Backend = Value(queue, arg); break;
+                    case "--backend": parsed.Backend = Value(queue, arg); parsed.BackendWasProvided = true; break;
+                    case "--engine": parsed.Backend = Value(queue, arg); parsed.BackendWasProvided = true; break;
                     case "--backend-session": parsed.BackendSessionId = Value(queue, arg); break;
                     case "--provider": parsed.Provider = Value(queue, arg); break;
                     case "--model": parsed.Model = Value(queue, arg); break;
