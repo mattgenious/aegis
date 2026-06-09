@@ -71,6 +71,11 @@ internal static partial class Program
         try
         {
             var command = args[0];
+            if (command is "backend" or "backends")
+            {
+                return RunBackendCommand(command, args.Skip(1).ToArray());
+            }
+
             if (command is "cell" or "work-map")
             {
                 return await RunCellCommand(args.Skip(1).ToArray());
@@ -179,6 +184,84 @@ internal static partial class Program
             BackendKind.Copilot => new CopilotBackend(),
             _ => new OpencodeBackend(client)
         };
+
+    private static int RunBackendCommand(string command, string[] args)
+    {
+        var queue = new Queue<string>(args);
+        var subcommand = command == "backend" && queue.Count > 0 && !queue.Peek().StartsWith("-", StringComparison.Ordinal)
+            ? queue.Dequeue()
+            : "detect";
+        if (command == "backends" && subcommand is "detect" or "list" && queue.Count > 0 && queue.Peek() is "detect" or "list")
+        {
+            subcommand = queue.Dequeue();
+        }
+
+        if (subcommand is "-h" or "--help" or "help")
+        {
+            PrintBackendHelp();
+            return 0;
+        }
+
+        if (subcommand is not ("detect" or "list"))
+        {
+            return Fail($"Unknown backend command '{subcommand}'. Use `aegis backend detect`.");
+        }
+
+        var format = "json";
+        while (queue.Count > 0)
+        {
+            var arg = queue.Dequeue();
+            switch (arg)
+            {
+                case "--format":
+                    format = RequireQueueValue(queue, arg);
+                    break;
+                case "-h":
+                case "--help":
+                    PrintBackendHelp();
+                    return 0;
+                default:
+                    throw new ArgumentException($"Unknown backend option '{arg}'.");
+            }
+        }
+
+        var report = BackendAvailabilityDetector.Detect();
+        if (string.Equals(format, "json", StringComparison.OrdinalIgnoreCase))
+        {
+            WriteJson(JsonSerializer.SerializeToNode(report, JsonOptions));
+            return 0;
+        }
+
+        if (string.Equals(format, "text", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(format, "md", StringComparison.OrdinalIgnoreCase))
+        {
+            WriteBackendText(report);
+            return 0;
+        }
+
+        throw new ArgumentException("--format must be json, text, or md.");
+    }
+
+    private static string RequireQueueValue(Queue<string> queue, string option)
+    {
+        if (queue.Count == 0) throw new ArgumentException($"{option} requires a value.");
+        return queue.Dequeue();
+    }
+
+    private static void WriteBackendText(BackendAvailabilityReport report)
+    {
+        Console.WriteLine($"Preferred backend: {report.PreferredBackend ?? "none"}");
+        Console.WriteLine("Selection order: " + string.Join(" -> ", report.SelectionOrder));
+        Console.WriteLine();
+        foreach (var backend in report.Backends)
+        {
+            Console.WriteLine($"{backend.Rank}. {backend.Backend}: {(backend.Available ? "available" : "missing")}");
+            Console.WriteLine($"   command: {backend.Command}");
+            Console.WriteLine($"   path: {backend.CommandPath ?? "(not found)"}");
+            Console.WriteLine($"   launch mode: {backend.LaunchMode}");
+            Console.WriteLine($"   note: {backend.Caveat}");
+        }
+    }
 
     private static ResolvedAgentProfile ResolveAgentProfile(Options options)
     {
@@ -1919,6 +2002,7 @@ Compatibility:
 Usage:
   aegis ensure-server [--server http://127.0.0.1:4096] [--hostname 0.0.0.0] [--port 4096]
   aegis health [--server URL]
+  aegis backend detect [--format json|text]
   aegis self-test
   aegis new --title TITLE [--parent ses_...]
   aegis spawn --target TARGET [--target TARGET...] [--model provider/model] [--directory PATH]
@@ -1968,7 +2052,7 @@ GPT-5-family variant availability seen locally:
   github-copilot/gpt-5.5:      none, low, medium, high, xhigh
 
 Common options:
-  --backend VALUE      Backend selector. One of: opencode, codex, pi, copilot. Default: opencode.
+  --backend VALUE      Backend selector. One of: opencode, codex, pi, copilot. Run `aegis backend detect` first.
   --engine VALUE       Alias for --backend.
   --server URL          OpenCode server URL. Default: http://127.0.0.1:4096
   --model provider/id   Model in provider/model format. Preferred: github-copilot/gpt-5.4-mini or github-copilot/gpt-5.5.
@@ -2038,6 +2122,10 @@ Run note:
     {
         switch (command)
         {
+            case "backend":
+            case "backends":
+                PrintBackendHelp();
+                return 0;
             case "health": PrintHealthHelp(); return 0;
             case "ensure-server": PrintEnsureServerHelp(); return 0;
             case "self-test": PrintSelfTestHelp(); return 0;
@@ -2065,6 +2153,31 @@ Run note:
                 return 1;
         }
     }
+
+    private static void PrintBackendHelp() => Console.WriteLine("""
+backend - detect locally available Aegis backend commands.
+
+Usage:
+  aegis backend detect [--format json|text]
+  aegis backend list [--format json|text]
+  aegis backends [--format json|text]
+
+Selection order:
+  1. codex
+  2. opencode
+  3. pi
+  4. copilot
+
+Notes:
+  Detection checks command availability on this system, including Aegis binary
+  overrides such as AEGIS_CODEX_BINARY and AEGIS_COPILOT_BINARY. It does not
+  prove authentication, model access, or that an OpenCode server is already
+  healthy. Run a live backend smoke before relying on a backend for important
+  work; for OpenCode, run `aegis ensure-server` and `aegis health`.
+  Cell launch/session-run auto-selects the first available backend in this
+  order only when no backend/profile/model controls are provided. Explicit
+  --backend always wins. Top-level ask/spawn keep their configured profiles.
+""");
 
     private static void PrintCellHelp() => Console.WriteLine("""
 cell - keep a lightweight recursive coordination cell for delegated agent work.
@@ -2103,7 +2216,8 @@ Notes:
   accepted as a legacy environment alias.
   fork creates a child cell linked to its parent, so delegated workers can recursively
   split their assigned scope into smaller cells when that is useful.
-  launch fans out from an existing cell and uses Codex by default unless --backend overrides it.
+  launch fans out from an existing cell and auto-selects codex, opencode, pi, then copilot
+  by local availability unless backend/profile/model controls override it.
   supervise syncs cell sessions and reports quiet, active, blocked, and handoff counts.
   store export/import writes portable JSON snapshots; the runtime store remains a JSON directory.
   session run links the cell session before posting the backend prompt, so long-running
