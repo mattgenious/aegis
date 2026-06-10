@@ -1697,7 +1697,7 @@ internal static partial class Program
         }
 
         return brief.TrimEnd() + Environment.NewLine + Environment.NewLine
-               + "## Coordinator Prompt" + Environment.NewLine + Environment.NewLine
+               + "## Coordinator Agent Prompt" + Environment.NewLine + Environment.NewLine
                + extraPrompt.Trim() + Environment.NewLine;
     }
 
@@ -2294,7 +2294,7 @@ internal static partial class Program
         builder.AppendLine();
         builder.AppendLine(workstream.Target ?? workstream.Name);
         builder.AppendLine();
-        builder.AppendLine("## Coordinator Context");
+        builder.AppendLine("## Coordinator Agent Context");
         builder.AppendLine();
         builder.AppendLine($"- Cell: `{mission.Id}` - {mission.Title}");
         if (!string.IsNullOrWhiteSpace(mission.ParentCellId)) builder.AppendLine($"- Parent cell: `{mission.ParentCellId}`");
@@ -2318,7 +2318,7 @@ internal static partial class Program
         builder.AppendLine();
         builder.AppendLine("- Make useful progress inside the assigned scope without waiting for permission when the repo instructions allow it.");
         builder.AppendLine("- Do not revert or overwrite unrelated work. Assume other agents may be editing other clones or slices.");
-        builder.AppendLine("- Keep changes and conclusions scoped to this workstream unless the coordinator asks for expansion.");
+        builder.AppendLine("- Keep changes and conclusions scoped to this workstream unless the coordinator agent asks for expansion.");
         builder.AppendLine();
         builder.AppendLine("## Expected Output");
         builder.AppendLine();
@@ -2326,7 +2326,7 @@ internal static partial class Program
         builder.AppendLine();
         builder.AppendLine("## Evidence To Return");
         builder.AppendLine();
-        builder.AppendLine("- Diffs, logs, test output, source paths, session exports, screenshots, or exact blocker evidence that the coordinator can inspect.");
+        builder.AppendLine("- Diffs, logs, test output, source paths, session exports, screenshots, or exact blocker evidence that the coordinator agent can inspect.");
         builder.AppendLine();
         builder.AppendLine("## Stop Or Report A Blocker When");
         builder.AppendLine();

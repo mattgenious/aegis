@@ -1,6 +1,6 @@
 # Package Consumption
 
-Aegis exposes libraries that hosts can consume without shelling out to the CLI executable. The repository and package IDs are now `aegis` / `Aegis.*`.
+Aegis exposes libraries that agent hosts can consume without shelling out to the CLI executable. The repository and package IDs are now `aegis` / `Aegis.*`.
 
 ## Packages
 
@@ -18,7 +18,7 @@ dotnet pack src/Aegis.Core/Aegis.Core.csproj -c Release -o artifacts/packages
 dotnet pack src/Aegis.Backends/Aegis.Backends.csproj -c Release -o artifacts/packages
 ```
 
-Reference from a consumer project:
+Reference from an agent host project:
 
 ```bash
 dotnet add package Aegis.Backends \
@@ -26,13 +26,13 @@ dotnet add package Aegis.Backends \
   --source /absolute/path/to/aegis/artifacts/packages
 ```
 
-`Aegis.Backends` depends on `Aegis.Core`, so consumers normally reference only the backend package unless they need contracts only.
+`Aegis.Backends` depends on `Aegis.Core`, so agent hosts normally reference only the backend package unless they need contracts only.
 
-Prompt markdown files are packed as content files and copied to the consumer output so `PromptTemplates` can resolve them at runtime. They are included in both packages because NuGet content files from transitive dependencies are not copied for every consumer shape.
+Prompt markdown files are packed as content files and copied to the agent host output so `PromptTemplates` can resolve them at runtime. They are included in both packages because NuGet content files from transitive dependencies are not copied for every host shape.
 
 ## Host-Facing API Shape
 
-Consumers should depend on `IAgentHarness` rather than OpenCode HTTP, Codex CLI, Pi CLI, or GitHub Copilot CLI details:
+Agent hosts should depend on `IAgentHarness` rather than OpenCode HTTP, Codex CLI, Pi CLI, or GitHub Copilot CLI details:
 
 ```csharp
 AgentRunResult result = await harness.AskAsync(new AgentRunRequest
@@ -51,7 +51,7 @@ if (!result.IsSuccess)
 Console.WriteLine(result.Summary?.Text);
 ```
 
-Backend construction remains explicit so hosts can decide how to instantiate and lifetime-manage each backend.
+Backend construction remains explicit so agent hosts can decide how to instantiate and lifetime-manage each backend.
 
 ## Backend And Model Profiles
 
