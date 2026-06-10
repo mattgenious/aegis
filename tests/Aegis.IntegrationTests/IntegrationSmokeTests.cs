@@ -861,7 +861,7 @@ public class IntegrationSmokeTests
     [InlineData("[]", "no assistant message")]
     [InlineData("""[{"info":{"id":"msg_empty","role":"assistant"},"parts":[{"id":"part_empty","type":"text","text":""}]}]""", "text was empty")]
     [InlineData("""[{"info":{"id":"msg_no_handoff","role":"assistant"},"parts":[{"id":"part_no_handoff","type":"text","text":"READY"}]}]""", "no 'FINAL HANDOFF' marker")]
-    public async Task CellSessionSyncKeepsAsyncRunQueuedUntilTimeoutThenBlocksIdleProviderSessionWithoutFreshHandoff(string messagesJson, string expectedEvidence)
+    public async Task CellSessionSyncKeepsAsyncRunQueuedUntilTimeoutThenMarksIdleProviderSessionForRestartOrNudge(string messagesJson, string expectedEvidence)
     {
         var workMapStore = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         var workspace = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -913,9 +913,12 @@ public class IntegrationSmokeTests
             await Task.Delay(TimeSpan.FromMilliseconds(1100));
             var synced = JsonNode.Parse((await RunCli(workMapStore, "cell", "session", "sync", "--session", sessionId, "--server", server.Url)).Stdout)!;
 
-            Assert.Equal("blocked", synced["status"]!.GetValue<string>());
-            Assert.Contains("without a fresh final handoff", synced["blocker"]!["summary"]!.GetValue<string>());
-            Assert.Contains(expectedEvidence, synced["blocker"]!["evidence"]!.GetValue<string>());
+            Assert.Equal("needs-restart-or-nudge", synced["status"]!.GetValue<string>());
+            Assert.Null(synced["blocker"]);
+            var restartEvent = synced["events"]!.AsArray()
+                .Select(item => item!)
+                .Last(item => item["type"]!.GetValue<string>() == "restartOrNudgeNeeded");
+            Assert.Contains(expectedEvidence, restartEvent["summary"]!.GetValue<string>());
         }
         finally
         {
