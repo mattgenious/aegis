@@ -8,6 +8,8 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Aegis</RootNamespace>
     <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
+    <CellUiDirectory>$(MSBuildProjectDirectory)\CellUi</CellUiDirectory>
+    <BuildCellUiOnPublish Condition="'$(BuildCellUiOnPublish)' == ''">true</BuildCellUiOnPublish>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,10 +18,23 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="CellUi\dist\**\*"
-      CopyToOutputDirectory="PreserveNewest"
-      CopyToPublishDirectory="PreserveNewest" />
+    <Content Remove="CellUi\dist\**\*" />
+    <None Remove="CellUi\dist\**\*" />
   </ItemGroup>
+
+  <Target Name="BuildCellUiForPublish" BeforeTargets="ComputeFilesToPublish" Condition="'$(BuildCellUiOnPublish)' == 'true'">
+    <Exec Command="npm ci" WorkingDirectory="$(CellUiDirectory)" Condition="Exists('$(CellUiDirectory)\package-lock.json')" />
+    <Exec Command="npm install" WorkingDirectory="$(CellUiDirectory)" Condition="!Exists('$(CellUiDirectory)\package-lock.json')" />
+    <Exec Command="npm run build" WorkingDirectory="$(CellUiDirectory)" />
+
+    <ItemGroup>
+      <CellUiDistFile Include="$(CellUiDirectory)\dist\**\*" />
+      <ResolvedFileToPublish Include="@(CellUiDistFile)">
+        <RelativePath>CellUi\dist\%(CellUiDistFile.RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 
   <Target Name="WriteLegacyCliAliasShims" AfterTargets="Publish">
     <PropertyGroup>

@@ -16,6 +16,7 @@ Aegis is a small .NET helper for deterministic delegated agent sessions and dura
 - `support/vscode/`: Aegis-owned VS Code Copilot Chat agent, instruction, and prompt templates.
 - `scripts/install-aegis.ps1`: standalone installer for publishing Aegis from this repo.
 - `scripts/install-vscode.ps1` and `scripts/install-vscode.sh`: standalone installers for Aegis VS Code support templates.
+- `LICENSE`: MIT license terms for use and redistribution.
 
 Conventions and coding standards are documented in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
@@ -31,6 +32,7 @@ aegis self-test
 ```
 
 The CLI targets .NET 10 to match the repo test projects and current agent workstation runtime.
+`dotnet publish` builds the optional React cell observer UI from `src/Aegis/CellUi` and includes the generated bundle in the publish output. Pass `-p:BuildCellUiOnPublish=false` to skip the UI bundle; `aegis cell serve` will then show a local fallback page with build instructions.
 
 Live backend verification is documented in [docs/live-backend-smoke.md](./docs/live-backend-smoke.md). Backend support is considered verified only after a real `ask` reaches the backend and extracts a fresh `FINAL HANDOFF`.
 
