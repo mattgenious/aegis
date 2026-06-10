@@ -31,19 +31,30 @@ coordinator agent
 ## Coordination flow
 
 ```mermaid
-flowchart LR
-    Human["human / bootstrap agent"] --> Install["install aegis + backend CLIs"]
-    Install --> Coordinator["coordinator agent"]
-    Coordinator --> Detect["detect backends"]
-    Coordinator --> Cell["create or resume cell"]
-    Cell --> Workers["launch worker sessions"]
-    Workers --> Backends["OpenCode / Codex / Pi / Copilot CLI"]
-    Backends --> Reports["evidence / blockers / verification / FINAL HANDOFF"]
-    Reports --> Cell
-    Cell --> Recover{"handoff present?"}
-    Recover -- yes --> Integrate["coordinator integrates"]
-    Recover -- no --> Nudge["needs-restart-or-nudge"]
-    Nudge --> Coordinator
+sequenceDiagram
+    participant Bootstrap as human / bootstrap
+    participant Coordinator as coordinator agent
+    participant Aegis as aegis
+    participant Cell as durable cell
+    participant Backend as backend CLI
+    participant Worker as worker agent
+
+    Bootstrap->>Aegis: install and expose on PATH
+    Coordinator->>Aegis: detect backends
+    Coordinator->>Aegis: create or resume cell
+    Aegis->>Cell: persist streams and sessions
+    Coordinator->>Aegis: launch scoped worker
+    Aegis->>Backend: start delegated session
+    Backend->>Worker: run brief
+    Worker-->>Aegis: evidence / blocker / FINAL HANDOFF
+    Aegis->>Cell: record outcome
+
+    alt final handoff exists
+        Coordinator->>Cell: integrate result
+    else stopped without handoff
+        Aegis->>Cell: mark needs-restart-or-nudge
+        Coordinator->>Aegis: restart or nudge
+    end
 ```
 
 ## Core contracts
