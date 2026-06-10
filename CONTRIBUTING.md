@@ -4,7 +4,7 @@
 
 - `src/Aegis.Core/` contains reusable contracts, session registry infrastructure, state normalization, and prompt rendering.
 - `src/Aegis.Backends/` contains reusable backend adapters and transport helpers.
-- `src/Aegis/` is the CLI application code.
+- `src/Aegis/` is the CLI-shaped command surface that agents invoke.
 - `tests/Aegis.UnitTests/` is for pure unit tests.
 - `tests/Aegis.IntegrationTests/` is for CLI/process-level tests.
 - `docs/` contains product and architecture docs.
@@ -37,7 +37,7 @@ The app binary is `aegis`. Keep `opencode-aegis` only as an explicit migration a
 
 ## Error handling and logging
 
-- Catch and normalize command-level errors to stable user-facing messages.
+- Catch and normalize command-level errors to stable agent-readable messages.
 - Avoid swallowing exceptions.
 - Process failures should include context (backend, command, session id when available).
 
