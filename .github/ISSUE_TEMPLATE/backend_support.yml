@@ -1,0 +1,33 @@
+name: Backend support
+description: Track investigation or implementation for a backend adapter.
+title: "Backend: "
+labels: ["enhancement", "area:backend", "status:needs-triage"]
+body:
+  - type: input
+    id: backend
+    attributes:
+      label: Backend
+      description: Name and link for the backend tool or API.
+      placeholder: Claude Code, Gemini CLI, Goose, ...
+    validations:
+      required: true
+  - type: textarea
+    id: command_surface
+    attributes:
+      label: Command or API surface
+      description: What non-interactive, async, resume, status, message, or abort surfaces exist?
+  - type: textarea
+    id: state_model
+    attributes:
+      label: Session/state model
+      description: How can Aegis identify, resume, inspect, and summarize sessions?
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Handoff extraction
+      description: How should Aegis parse messages and extract final handoffs?
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Known limitations
+      description: Auth, sandboxing, lack of async support, missing APIs, or platform constraints.
