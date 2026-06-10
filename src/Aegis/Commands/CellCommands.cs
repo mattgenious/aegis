@@ -11,6 +11,8 @@ namespace Aegis;
 
 internal static partial class Program
 {
+    private const string NeedsRestartOrNudgeStatus = "needs-restart-or-nudge";
+
     private static async Task<int> RunCellCommand(string[] args)
     {
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
@@ -698,7 +700,7 @@ internal static partial class Program
 
             WriteCellJson(
                 results,
-                NextCommandHintContext.ForMission(mission.Id, "Review sync results, then supervise again or inspect blocked sessions."));
+                NextCommandHintContext.ForMission(mission.Id, "Review sync results, then supervise again or inspect sessions needing restart/nudge."));
             return 0;
         }
 
@@ -746,30 +748,32 @@ internal static partial class Program
                 observations.Add(ToCellStatusObservation(state, now));
             }
 
-            var blocker = summary is null && current.FinalHandoff is null
-                ? BuildMissingHandoffBlocker(current, state, allMessages, anchorMessageIndex, options.SummaryMarker, now)
-                : null;
-            if (blocker is not null)
+            var needsRestartOrNudge = summary is null
+                                       && current.FinalHandoff is null
+                                       && current.Blocker is null
+                                       && ShouldMarkNeedsRestartOrNudge(current, state, now);
+            if (needsRestartOrNudge)
             {
                 events.Add(new CellEventRecord
                 {
                     AtUtc = now,
-                    Type = "blockerDetected",
-                    Summary = blocker.Summary
+                    Type = "restartOrNudgeNeeded",
+                    Summary = BuildMissingHandoffRecoverySummary(state, allMessages, anchorMessageIndex, options.SummaryMarker)
                 });
             }
 
-            var keepQueued = blocker is null
-                             && summary is null
+            var keepQueued = summary is null
                              && current.FinalHandoff is null
+                             && current.Blocker is null
+                             && !needsRestartOrNudge
                              && ShouldKeepAsyncSessionQueued(current, state, now);
 
             return current with
             {
                 Status = summary is not null
                     ? "handoff"
-                    : blocker is not null
-                        ? "blocked"
+                    : needsRestartOrNudge
+                        ? NeedsRestartOrNudgeStatus
                         : keepQueued
                             ? current.Status
                             : state?.EffectiveStatus ?? current.Status,
@@ -782,7 +786,7 @@ internal static partial class Program
                     AtUtc = now,
                     Text = summary.Text
                 },
-                Blocker = summary is not null ? null : blocker ?? current.Blocker
+                Blocker = summary is not null || needsRestartOrNudge ? null : current.Blocker
             };
         });
         await UpdateSessionParents(store, updated, now, "sessionSynced", state is null ? "No status snapshot returned." : $"Status observed as {state.EffectiveStatus}.");
@@ -1370,7 +1374,7 @@ internal static partial class Program
             ["runs"] = runs
         }, NextCommandHintContext.ForMission(mission.Id, finalCounts.Active > 0
             ? "Continue supervision until active workers are idle."
-            : "Inspect handoffs, blockers, and evidence before closing or launching more work."));
+            : "Inspect handoffs, blockers, sessions needing restart/nudge, and evidence before closing or launching more work."));
         return 0;
     }
 
@@ -2374,36 +2378,32 @@ internal static partial class Program
         return -1;
     }
 
-    private static CellBlockerRecord? BuildMissingHandoffBlocker(
+    private static bool ShouldMarkNeedsRestartOrNudge(
         CellAgentSessionRecord session,
+        SessionStateSnapshot? state,
+        DateTimeOffset now) =>
+        state is not null
+        && !IsActiveStatus(state.EffectiveStatus)
+        && HasSessionWaitExpired(session, now);
+
+    private static string BuildMissingHandoffRecoverySummary(
         SessionStateSnapshot? state,
         IReadOnlyList<BackendMessage> messages,
         int anchorMessageIndex,
-        string marker,
-        DateTimeOffset now)
+        string marker)
     {
-        if (state is null || IsActiveStatus(state.EffectiveStatus) || !HasSessionWaitExpired(session, now))
-        {
-            return null;
-        }
-
         var assistantAfterPrompt = messages
             .Skip(Math.Max(anchorMessageIndex + 1, 0))
             .Where(message => string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         var assistantWithText = assistantAfterPrompt.FirstOrDefault(message => !string.IsNullOrWhiteSpace(message.Text));
-        var evidence = assistantAfterPrompt.Length == 0
-            ? $"Observed status '{state.EffectiveStatus}' after sync with no assistant message after the latest user prompt."
-            : assistantWithText is null
-                ? $"Observed status '{state.EffectiveStatus}' after sync with {assistantAfterPrompt.Length} assistant message(s), but their text was empty."
-                : $"Observed status '{state.EffectiveStatus}' after sync with assistant output after the latest user prompt, but no '{marker}' marker.";
+        var status = state?.EffectiveStatus ?? "unknown";
 
-        return new CellBlockerRecord
-        {
-            AtUtc = now,
-            Summary = "Session reached an idle state without a fresh final handoff.",
-            Evidence = evidence
-        };
+        return assistantAfterPrompt.Length == 0
+            ? $"Session is {NeedsRestartOrNudgeStatus}: observed status '{status}' after sync with no assistant message after the latest user prompt."
+            : assistantWithText is null
+                ? $"Session is {NeedsRestartOrNudgeStatus}: observed status '{status}' after sync with {assistantAfterPrompt.Length} assistant message(s), but their text was empty."
+                : $"Session is {NeedsRestartOrNudgeStatus}: observed status '{status}' after sync with assistant output after the latest user prompt, but no '{marker}' marker.";
     }
 
     private static bool HasSessionWaitExpired(CellAgentSessionRecord session, DateTimeOffset now)

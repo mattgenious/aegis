@@ -150,7 +150,7 @@ function Overview({ snapshot, navigate }) {
   );
   const visibleSessions = sessions.filter(({ session }) => !isArchived(session.status));
   const archivedSessions = sessions.length - visibleSessions.length;
-  const activeSessions = visibleSessions.filter(({ session }) => !['handoff', 'blocked', 'done', 'complete'].includes(normalize(session.status))).length;
+  const activeSessions = visibleSessions.filter(({ session }) => !isTerminalOrNeedsAction(session.status)).length;
 
   return (
     <div className="page-stack">
@@ -799,7 +799,7 @@ function statusTone(status) {
   if (['handoff', 'done', 'complete', 'pass', 'passed'].includes(value)) return 'success';
   if (['blocked', 'failed', 'fail', 'error'].includes(value)) return 'danger';
   if (['waiting', 'queued', 'running', 'in-progress', 'needs-review'].includes(value)) return 'info';
-  if (['planned', 'linked', 'skip', 'skipped', 'archived'].includes(value)) return 'warning';
+  if (['planned', 'linked', 'skip', 'skipped', 'archived', 'needs-restart-or-nudge'].includes(value)) return 'warning';
   return 'neutral';
 }
 
@@ -809,6 +809,10 @@ function normalize(value) {
 
 function isArchived(status) {
   return ['archived', 'archive'].includes(normalize(status));
+}
+
+function isTerminalOrNeedsAction(status) {
+  return ['handoff', 'blocked', 'done', 'complete', 'needs-restart-or-nudge'].includes(normalize(status));
 }
 
 function firstLine(value) {
