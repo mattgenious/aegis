@@ -1,0 +1,22 @@
+name: Documentation
+description: Improve docs, prompts, instructions, examples, or public positioning.
+title: "Docs: "
+labels: ["documentation", "area:docs"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Documentation problem
+      description: What is missing, stale, misleading, or too hard to find?
+    validations:
+      required: true
+  - type: textarea
+    id: audience
+    attributes:
+      label: Audience
+      description: Which agent, maintainer, package host, or contributor needs this?
+  - type: textarea
+    id: suggested_change
+    attributes:
+      label: Suggested change
+      description: What should the docs say or link to?

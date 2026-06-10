@@ -1,0 +1,38 @@
+name: Platform verification
+description: Verify Aegis on an operating system or runtime environment.
+title: "Platform: "
+labels: ["area:platform", "status:needs-smoke"]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OS/runtime details
+      placeholder: macOS 15, Ubuntu 24.04, .NET 10 SDK version, shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Verification checklist
+      options:
+        - label: Fresh clone builds.
+        - label: Tests pass.
+        - label: Install path works or is documented.
+        - label: `aegis self-test` passes.
+        - label: `aegis backend detect` behaves sensibly.
+        - label: Cell store paths and file locking work.
+        - label: Publish output works.
+  - type: textarea
+    id: results
+    attributes:
+      label: Results
+      description: Commands run, output summaries, failures, and workarounds.
