@@ -2218,7 +2218,8 @@ Notes:
   split their assigned scope into smaller cells when that is useful.
   launch fans out from an existing cell and auto-selects codex, opencode, pi, then copilot
   by local availability unless backend/profile/model controls override it.
-  supervise syncs cell sessions and reports quiet, active, blocked, and handoff counts.
+  supervise syncs cell sessions and reports quiet, active, blocked, and handoff counts;
+  stopped sessions without a handoff become needs-restart-or-nudge rather than blocked.
   store export/import writes portable JSON snapshots; the runtime store remains a JSON directory.
   session run links the cell session before posting the backend prompt, so long-running
   workers are visible to show, supervise, and the observer UI while they are still active.
