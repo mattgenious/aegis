@@ -1,110 +1,62 @@
 # Aegis
 
-Aegis is a small .NET CLI for running delegated AI-agent sessions and keeping coordination state durable.
+Aegis is a local coordination substrate for AI agents that need to manage other AI agent sessions.
 
-It is meant for people who already use command-line agent tools and want a safer coordination layer around them: consistent session records, final handoff summaries, backend routing, and lightweight multi-agent "cell" state that can survive terminal restarts.
+It is not designed as a human-operated CLI product. Humans install it and keep it available on PATH so their agents can launch delegated workers, preserve coordination state, recover stalled sessions, and consolidate final handoffs without inventing ad hoc terminal loops or scraping full transcripts.
 
-## Why use it?
+## What Aegis enables agents to do
 
-- **One command surface for multiple agent backends.** Aegis can route work through OpenCode, Codex, Pi, or GitHub Copilot CLI where those tools are installed and authenticated.
-- **Handoffs instead of transcript spelunking.** Delegated tasks are wrapped so workers return a `FINAL HANDOFF` summary that can be fetched later with `aegis last-summary`.
-- **Durable coordination state.** Cells track streams, clones, sessions, evidence, blockers, verification, child cells, and integration notes in JSON records outside the target repo.
-- **Restart-friendly supervision.** Stopped sessions without a final handoff are marked `needs-restart-or-nudge`, not `blocked`, so coordinators can recover them deliberately.
-- **CLI-first today, library/server-friendly later.** The current product is a local CLI plus reusable .NET libraries. The boundaries are intentionally backend-oriented so future server integrations, including an MCP server, can build on the same core concepts.
+- **Delegate work across backends.** Route worker sessions through supported local backends such as OpenCode, Codex, Pi, or GitHub Copilot CLI without hardcoding each backend protocol into every coordinator agent.
+- **Require final handoffs.** Wrap delegated prompts so worker agents return a `FINAL HANDOFF` summary that another agent can fetch without loading an entire transcript.
+- **Persist coordination state.** Store cells, child cells, streams, clone paths, backend sessions, evidence, blockers, verification observations, and integration notes outside the target repository.
+- **Supervise and recover sessions.** Let coordinator agents distinguish real blockers from recoverable stopped sessions. A stopped session without a fresh handoff becomes `needs-restart-or-nudge`, not `blocked`.
+- **Fan out recursively.** Give worker agents enough durable context to split assigned work into child cells when the task needs another coordination layer.
+- **Stay backend/server ready.** Keep the coordination model separated from backend transport so future integrations, including an MCP server, can build on the same records and contracts.
 
-Aegis is not a hosted agent platform and does not replace your backend CLIs. It orchestrates and records work done through tools you run locally.
+## Operating model
 
-## Quick start
+Aegis assumes an agent is the primary caller.
 
-Prerequisites:
+1. A human or bootstrap agent installs Aegis and any desired backend CLIs.
+2. A coordinator agent detects available backends and creates or resumes a cell.
+3. The coordinator agent launches worker sessions with scoped briefs and records them in the cell.
+4. Worker agents report evidence, blockers, verification, and final handoffs.
+5. The coordinator agent syncs session state, restarts or nudges recoverable sessions, and integrates the resulting work.
 
-- .NET 10 SDK or runtime for local build/install.
-- At least one supported backend CLI if you want live delegated sessions: `opencode`, `codex`, `pi`, or `copilot`.
-- Node/npm only if you publish the optional Cell observer UI from source.
+The command surface exists so agents have deterministic, scriptable verbs and machine-readable records. It is not the main story of the repository.
 
-Install from this repository:
+## Agent-facing contracts
 
-```powershell
-git clone https://github.com/mattgenious/aegis.git
-cd aegis
-powershell -File scripts/install-aegis.ps1
-```
+- **Session records** preserve backend session ids, status, prompt metadata, summaries, and message pointers.
+- **Cell records** preserve recursive coordination state across independent agent processes and terminal restarts.
+- **Final handoff extraction** gives coordinator agents a bounded summary contract instead of forcing transcript replay.
+- **Backend detection** reports local command availability only; authentication, model access, and OpenCode server health still require live smoke verification.
+- **Generated state stays outside target repos** by default. Agents should not commit cell/session/backend state unless they are intentionally creating a fixture.
 
-Open a new terminal, then check the install and available backends:
+## Documentation map
 
-```powershell
-aegis self-test
-aegis backend detect
-```
-
-Run a small delegated task:
-
-```powershell
-aegis ask --timeout 300 --prompt "Read the repository layout and return a short FINAL HANDOFF summary."
-```
-
-For longer-running work, use `--async` and fetch the summary later:
-
-```powershell
-aegis ask --async --title "Check docs" --prompt-file task.md
-aegis last-summary --session ses_... --plain
-```
-
-## Cells for multi-agent work
-
-Use `aegis cell` when a coordinator needs durable state for several workers or workstreams:
-
-```powershell
-aegis cell create --title "Ship search fixes" --intent "Coordinate independent repo slices"
-aegis cell stream add --cell cell-... --name "API slice" --role implementer --clone C:\workspaces\api-search-fix
-aegis cell launch --cell cell-... --backend opencode --prompt-file worker-context.md
-aegis cell session sync --cell cell-... --all
-aegis cell show --cell cell-... --format html --output cell.html
-```
-
-Cell records are stored outside target repositories by default under `AEGIS_CELL_DIR`, or the platform app-data `aegis/cells` directory when that variable is unset.
-
-## Backend support
-
-| Backend | Status |
-|---|---|
-| `opencode` | Full command coverage and the default OpenCode-oriented backend. |
-| `codex` | Local command adapter with session-local state files and JSON message extraction. |
-| `pi` | Local command adapter using JSON event output and message reconstruction. |
-| `copilot` | Conservative blocking GitHub Copilot CLI adapter; native async/resume is not claimed yet. |
-
-Run `aegis backend detect` before choosing a backend. Detection checks local command availability only; authentication, model access, and server health still require a live smoke test.
-
-## Documentation
-
-- [CLI guide](./docs/cli-guide.md): install details, command examples, cells, server setup, compatibility aliases, and migration notes.
-- [Contributing](./CONTRIBUTING.md): project structure, coding conventions, testing expectations, and backend-adapter guidance.
+- [Agent command contract](./docs/agent-command-contract.md): command forms and output contracts for agent implementers, maintainers, and local smoke tests.
+- [Contributing](./CONTRIBUTING.md): source layout, agent-facing design constraints, coding conventions, and test expectations.
 - [Live backend smoke](./docs/live-backend-smoke.md): what counts as verified backend support.
-- [Package consumption](./docs/package-consumption.md): using `Aegis.Core` and `Aegis.Backends` from another .NET host.
-- [Multi-backend rollout](./docs/multi-backend-rollout.md): current adapter parity and known backend differences.
+- [Package consumption](./docs/package-consumption.md): using `Aegis.Core` and `Aegis.Backends` from an agent host.
+- [Multi-backend rollout](./docs/multi-backend-rollout.md): adapter parity and backend behavior differences.
 
 ## Repository layout
 
 | Path | Purpose |
 |---|---|
-| `src/Aegis/` | CLI application source. |
+| `src/Aegis/` | CLI command surface that agents invoke. |
 | `src/Aegis.Core/` | Shared contracts, session registry infrastructure, state normalization, and prompt rendering. |
 | `src/Aegis.Backends/` | OpenCode, Codex, Pi, and GitHub Copilot CLI backend adapters. |
-| `src/Aegis/CellUi/` | Optional read-only Cell observer UI. |
-| `tests/` | Unit and integration tests. |
-| `prompts/` | Built-in agent prompt templates. |
+| `src/Aegis/CellUi/` | Optional read-only observer for cell records. |
+| `tests/` | Unit and integration tests for agent/session behavior. |
+| `prompts/` | Built-in worker and delegation prompt templates. |
 | `support/vscode/` | Aegis-owned VS Code Copilot Chat agent, instruction, and prompt templates. |
 | `scripts/` | Local install helpers for the CLI and VS Code support templates. |
 
-## Build from source
+## Build and install
 
-```powershell
-dotnet build aegis.sln
-dotnet test aegis.sln
-dotnet publish src/Aegis/Aegis.csproj -c Release -o "$HOME\.local\bin" --self-contained false
-```
-
-`dotnet publish` builds the optional React Cell observer UI by default. Pass `-p:BuildCellUiOnPublish=false` to skip the UI bundle; `aegis cell serve` will then show a local fallback page with build instructions.
+Install and build details are intentionally kept in the agent command contract and contributing docs so this README can stay focused on the agent capability model. The important repo-level contract is that installing Aegis makes an `aegis` command available to agents, and `dotnet publish` can include the optional Cell observer UI from source.
 
 ## License
 

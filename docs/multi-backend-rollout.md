@@ -16,7 +16,7 @@
 - [x] Live-smoke `ask` against opencode, codex, and pi.
 - [x] Live-smoke Copilot backend through `cell session run --backend copilot` after GitHub Copilot CLI install/auth.
 - [ ] Add automated end-to-end CLI command parity tests for backend-routing where credentials/backends are available.
-- [ ] Expand README command examples with live backend examples once command routing is validated in both adapters.
+- [ ] Expand the agent command contract with live backend examples once command routing is validated in both adapters.
 - [x] Wire ask/status/last-summary through backends for codex/pi/copilot.
 - [x] Wire new/latest/messages/wait/abort through backends for codex/pi/copilot, with copilot abort returning unsupported guidance.
 
@@ -30,5 +30,5 @@
 ## Notes for next backends
 
 - Add unit tests for message parsing of transport events before integration.
-- Define failure contracts (`exit_code`, `error`, `summary`) so CLI consumers can distinguish transport issues from prompt quality.
+- Define failure contracts (`exit_code`, `error`, `summary`) so agent hosts can distinguish transport issues from prompt quality.
 - Add explicit guidance for unsupported or partially parsed streams to avoid corrupting summary state.

@@ -70,7 +70,7 @@ public sealed class OpenCodeClient(HttpClient http)
             var target = response.RequestMessage?.RequestUri?.GetLeftPart(UriPartial.Authority) ?? "the target OpenCode server";
             throw new HttpRequestException(
                 $"401 Unauthorized from {target}. This usually means the target OpenCode server requires HTTP Basic auth. " +
-                "If OPENCODE_SERVER_USERNAME or OPENCODE_SERVER_PASSWORD are set in your shell, prefer `ensure-server` so the child `opencode serve` process starts without inherited auth, or start `opencode serve` separately and attach to it.",
+                "If OPENCODE_SERVER_USERNAME or OPENCODE_SERVER_PASSWORD are set in the parent environment, use `ensure-server` so the child `opencode serve` process starts without inherited auth, or start `opencode serve` separately and attach to it.",
                 null,
                 response.StatusCode);
         }
@@ -78,4 +78,3 @@ public sealed class OpenCodeClient(HttpClient http)
         throw new HttpRequestException($"{(int)response.StatusCode} {response.ReasonPhrase}: {body}", null, response.StatusCode);
     }
 }
-
