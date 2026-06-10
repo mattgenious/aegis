@@ -168,6 +168,7 @@ aegis cell session verify --session codex-... --kind parent-review --result pass
 The observer UI is optional and read-only. It polls the same JSON records, writes request lines to stderr, and can append durable JSONL access records with `--access-log FILE`.
 
 Cell coordination is velocity-first: when uncertainty, missing evidence, independent slices, or competing hypotheses exist, fan out worker streams early, require comparison-ready handoffs, verify in parallel where practical, then consolidate, prune, and redirect from evidence.
+When a backend session has stopped without a fresh final handoff, `cell session sync` records it as `needs-restart-or-nudge` so coordinators can restart or nudge it without mistaking it for a blocker.
 
 For Tailscale Serve without changing firewall rules:
 
