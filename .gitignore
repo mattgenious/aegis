@@ -14,5 +14,7 @@ node_modules/
 # Runtime artifacts
 *.log
 *.tmp
-graphify-out/*
-!graphify-out/graph.json
+graphify-out/
+
+# Generated UI bundle
+src/Aegis/CellUi/dist/
