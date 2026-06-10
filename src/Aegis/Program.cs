@@ -1962,7 +1962,7 @@ internal static partial class Program
             var target = response.RequestMessage?.RequestUri?.GetLeftPart(UriPartial.Authority) ?? "the target OpenCode server";
             throw new HttpRequestException(
                 $"401 Unauthorized from {target}. This usually means the target OpenCode server requires HTTP Basic auth. " +
-                "If OPENCODE_SERVER_USERNAME or OPENCODE_SERVER_PASSWORD are set in your shell, prefer `ensure-server` so the child `opencode serve` process starts without inherited auth, or start `opencode serve` separately and attach to it.",
+                "If OPENCODE_SERVER_USERNAME or OPENCODE_SERVER_PASSWORD are set in the parent environment, use `ensure-server` so the child `opencode serve` process starts without inherited auth, or start `opencode serve` separately and attach to it.",
                 null,
                 response.StatusCode);
         }
@@ -1978,14 +1978,14 @@ internal static partial class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-aegis - deterministic helper for delegated agent sessions
+aegis - deterministic coordination substrate for agents managing delegated agent sessions
 
 Goal:
-  Start delegated backend sessions, force a final handoff summary, fetch only
-  that summary when needed, and keep lightweight cell records for complex
-  multi-agent coordination.
+  Give coordinator agents deterministic verbs for starting delegated backend
+  sessions, forcing final handoff summaries, fetching bounded summaries, and
+  keeping lightweight cell records for complex multi-agent coordination.
 
-Golden path:
+Agent integration path:
   aegis ensure-server --hostname 0.0.0.0 --port 4096 --print-logs
   aegis ask --timeout 900 --model github-copilot/gpt-5.4-mini --variant low --prompt-file task.md
   aegis last-summary --session ses_... --plain
@@ -2031,7 +2031,7 @@ Usage:
   aegis cell show --cell ID --format json|md|html
 
 Model examples:
-  --model github-copilot/gpt-5.4-mini        Fast delegated work; prefer this for most pseudo-subagents.
+  --model github-copilot/gpt-5.4-mini        Fast delegated work; default recommendation for most pseudo-subagents.
   --model github-copilot/gpt-5.5             Stronger delegated work when quality matters more than speed.
 
 Variant/reasoning note:
@@ -2086,7 +2086,7 @@ Output contract:
   ask prints JSON: { sessionID, summary, messageID, partID }.
   Without --async, ask queues via /prompt_async, polls status/messages, and never waits
   on the model response stream itself.
-  With --async, summary is usually null until you run last-summary.
+  With --async, summary is usually null until a coordinator agent runs last-summary.
   wait is a passive idle wait and does not send prompts or accept --timeout.
   last-summary prints either that JSON or only the summary with --plain.
   If --raw is not set, ask wraps the prompt and instructs the subagent to put
@@ -2111,7 +2111,7 @@ Server note:
 Run note:
   Raw `opencode run` can still fail in some environments when those same auth
   variables are exported in the parent shell, because its self-start/self-attach
-  path may not reuse them correctly. Prefer `ensure-server` plus this CLI, or
+  path may not reuse them correctly. Use `ensure-server` plus the Aegis command surface, or
   start `opencode serve` yourself and attach other clients to that server.
 """);
     }
@@ -2236,7 +2236,7 @@ Notes:
   The legacy `aegis work-map` command form remains accepted during migration;
   use `aegis cell` for new briefs, docs, and automation.
   session link/update accept manual external backend labels for non-Aegis workers such as
-  shipper, background, human, or external coordinator sessions; sync skips those records.
+  shipper, background, human, or external coordinator-agent sessions; sync skips those records.
   serve starts an optional read-only React observer UI over the same records and logs each
   request to stderr. Pass --access-log FILE to append durable JSONL access records.
   For Tailscale Serve without firewall changes, keep the default loopback bind and run
@@ -2435,7 +2435,7 @@ Behavior:
   Does not send a prompt.
   Does not accept --timeout; press Ctrl+C to stop waiting.
   OpenCode omits idle sessions from /session/status, so a missing status entry counts as idle.
-  Does not require a fresh FINAL HANDOFF. Use last-summary when you need handoff text.
+  Does not require a fresh FINAL HANDOFF. Use last-summary when a coordinator agent needs handoff text.
 
 Example:
   aegis wait --session ses_...
@@ -2485,7 +2485,7 @@ Options:
 
 Safety:
   watch always sends a prompt first. Do not use it as a replacement for a passive wait; use status/tail/last-summary for inspection.
-  Prefer --until-idle, --max-runs, or --max-duration-minutes for bounded supervision unless you intentionally want an indefinite loop.
+  Prefer --until-idle, --max-runs, or --max-duration-minutes for bounded supervision unless an indefinite loop is intentional.
 
 Examples:
   aegis watch --session ses_... --directory E:\ --interval-minutes 15 --prompt-file watch.md
