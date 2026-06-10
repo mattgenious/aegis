@@ -7,7 +7,7 @@ When coordinating delegated agent work, prefer the installed `aegis` command ove
 
 Use `aegis cell` for recursive or multi-agent work. Record streams, backend sessions, clone paths, evidence, blockers, verification, and final handoffs in the cell. Use bounded supervision commands such as `aegis tail`, `aegis last-summary`, `aegis wait`, and `aegis cell session sync`.
 
-Require delegated workers to produce a fresh `FINAL HANDOFF`; use `aegis last-summary` or cell handoff records before reading full transcripts. If `cell session sync` marks a session `needs-restart-or-nudge`, treat it as recoverable coordinator-agent action rather than a blocker: restart or nudge the backend session and keep any real blocker records separate.
+Require delegated workers to produce a fresh `FINAL HANDOFF`; use `aegis last-summary` or cell handoff records before reading full transcripts. Treat recoverable sync states as coordinator-agent action, not as evidence of a true blocker; keep real blocker records separate.
 
 Run `aegis backend detect` before assuming a backend is available. Detection proves local command availability only; authentication, model access, and OpenCode server health still need a live smoke when backend behavior matters. Use explicit `--backend` when a specific adapter is required.
 

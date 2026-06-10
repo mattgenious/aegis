@@ -14,7 +14,7 @@ coordinator agent
  durable cell state  <---->  worker sessions
       |                         |
       v                         v
- evidence / blockers / final handoffs / recovery signals
+ evidence / blockers / final handoffs / state updates
 ```
 
 ## What it gives agents
@@ -24,15 +24,15 @@ coordinator agent
 | **Delegation** | Launch worker sessions through OpenCode, Codex, Pi, or GitHub Copilot CLI. |
 | **Final handoffs** | Require a bounded `FINAL HANDOFF` instead of scraping full transcripts. |
 | **Durable cells** | Persist streams, clone paths, sessions, evidence, blockers, verification, and integration notes. |
-| **Recovery signals** | Mark stopped sessions without handoff as `needs-restart-or-nudge`, not `blocked`. |
+| **Supervision state** | Classify progress, stalls, handoffs, and blockers so coordinator agents know the next action. |
 | **Recursive fan-out** | Let worker agents split assigned work into child cells when needed. |
-| **Backend boundaries** | Keep coordination state separate from backend transport, ready for future server/MCP shapes. |
+| **Integration boundaries** | Keep coordination state separate from backend transport so new backends or server shapes can reuse it. |
 
 ## Coordination flow
 
 ```mermaid
 sequenceDiagram
-    participant Bootstrap as human / bootstrap
+    participant Bootstrap as bootstrap
     participant Coordinator as coordinator agent
     participant Aegis as aegis
     participant Cell as durable cell
@@ -48,13 +48,8 @@ sequenceDiagram
     Backend->>Worker: run brief
     Worker-->>Aegis: evidence / blocker / FINAL HANDOFF
     Aegis->>Cell: record outcome
-
-    alt final handoff exists
-        Coordinator->>Cell: integrate result
-    else stopped without handoff
-        Aegis->>Cell: mark needs-restart-or-nudge
-        Coordinator->>Aegis: restart or nudge
-    end
+    Coordinator->>Cell: read current state
+    Coordinator->>Aegis: continue, retry, split, or integrate
 ```
 
 ## Core contracts
@@ -62,8 +57,8 @@ sequenceDiagram
 - **Session records** preserve backend ids, status, prompt metadata, summaries, and message pointers.
 - **Cell records** preserve recursive coordination state across independent agent processes.
 - **Final handoff extraction** gives coordinator agents a bounded summary contract.
-- **Backend detection** reports local command availability only. Live backend behavior still needs smoke verification.
-- **Generated state** stays outside target repos unless intentionally committed as a fixture.
+- **Backend detection** reports local command availability only. Live behavior still needs smoke verification.
+- **State isolation** keeps coordination records outside target repos by default.
 
 ## Docs
 
