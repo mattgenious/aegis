@@ -1,0 +1,29 @@
+name: Agent coordination
+description: Improve cells, handoffs, supervision, evidence, or multi-agent workflows.
+title: "Coordination: "
+labels: ["enhancement", "area:cell", "status:needs-triage"]
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Coordination workflow
+      description: What multi-agent workflow should become easier or safer?
+    validations:
+      required: true
+  - type: textarea
+    id: current_gap
+    attributes:
+      label: Current gap
+      description: What does Aegis fail to record, route, supervise, or recover today?
+    validations:
+      required: true
+  - type: textarea
+    id: desired_state
+    attributes:
+      label: Desired state
+      description: What should coordinator and worker agents be able to rely on?
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Examples or evidence
+      description: Links to issues, cells, handoffs, logs, or sketches.

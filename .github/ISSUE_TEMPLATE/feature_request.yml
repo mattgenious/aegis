@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a capability for agents coordinating other agents.
+title: "Feature: "
+labels: ["enhancement", "status:needs-triage"]
+body:
+  - type: textarea
+    id: capability
+    attributes:
+      label: Agent capability
+      description: What should coordinator or worker agents be able to do?
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Scenario
+      description: When would an agent need this?
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Desired contract
+      description: Describe the command/API/state/output contract if you have one in mind.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Existing Aegis behavior, scripts, or external tools that almost solve this.
